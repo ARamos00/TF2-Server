@@ -39,6 +39,12 @@ if [ "$SRCDS_SDR_FAKEIP" -eq 1 ]; then
         SERVER_FAKEIP_FLAG="-enablefakeip";
 fi
 
+REPLAY_FLAG="";
+
+if [ "$SRCDS_REPLAY" -eq 1 ]; then
+        REPLAY_FLAG="-replay";
+fi
+
 bash "${STEAMAPPDIR}/srcds_run_64" -game "${STEAMAPP}" -console -autoupdate \
                         -steam_dir "${STEAMCMDDIR}" \
                         -steamcmd_script "${HOMEDIR}/${STEAMAPP}_update.txt" \
@@ -59,4 +65,5 @@ bash "${STEAMAPPDIR}/srcds_run_64" -game "${STEAMAPP}" -console -autoupdate \
                         +servercfgfile "${SRCDS_CFG}" \
                         +mapcyclefile "${SRCDS_MAPCYCLE}" \
                         ${SERVER_SECURITY_FLAG} \
-                        ${SERVER_FAKEIP_FLAG}
+                        ${SERVER_FAKEIP_FLAG} \
+                        ${REPLAY_FLAG}

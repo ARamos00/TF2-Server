@@ -93,6 +93,7 @@ SRCDS_CFG="server.cfg"
 SRCDS_MAPCYCLE="mapcycle_default.txt" (value can be overwritten by tf/cfg/server.cfg)
 SRCDS_SECURED=1 (0 to start the server as insecured)
 SRCDS_SDR_FAKEIP=0 (1 to allow for the Steam Datagram Relay, hiding the server's IP)
+SRCDS_REPLAY=0 (1 to enable replay support)
 ```
 
 ## Config
