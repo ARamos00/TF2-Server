@@ -25,7 +25,7 @@ RUN set -x \
 		libbz2-1.0 \
 		libtinfo6 \
 		libcurl3-gnutls \
-	&& mkdir -p "${STEAMAPPDIR}" \
+	&& mkdir -p "${STEAMAPPDIR}" "${TF2_BASE_DIR}" \
 	# Create autoupdate config
 	&& { \
 		echo '@ShutdownOnFailedCommand 1'; \
