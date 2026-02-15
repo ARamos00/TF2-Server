@@ -5,6 +5,11 @@ log() {
         echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] $*"
 }
 
+fatal() {
+        log "ERROR: $*"
+        exit 1
+}
+
 find_metamod_linux64_binary() {
         local mm_root="$1"
         local candidate
@@ -21,30 +26,114 @@ find_metamod_linux64_binary() {
         return 1
 }
 
+ensure_writable_dir() {
+        local dir="$1"
+        mkdir -p "${dir}"
+        if [ ! -w "${dir}" ]; then
+                fatal "Directory '${dir}' is not writable."
+        fi
+}
+
+ensure_steamclient_sdk64() {
+        local sdk64_dir="${HOMEDIR}/.steam/sdk64"
+        local target="${sdk64_dir}/steamclient.so"
+        local source=""
+
+        mkdir -p "${sdk64_dir}"
+
+        for candidate in \
+                "${STEAMCMDDIR}/linux64/steamclient.so" \
+                "${HOMEDIR}/.steam/steamcmd/linux64/steamclient.so" \
+                "${HOMEDIR}/.local/share/Steam/steamcmd/linux64/steamclient.so"; do
+                if [ -f "${candidate}" ]; then
+                        source="${candidate}"
+                        break
+                fi
+        done
+
+        if [ -z "${source}" ]; then
+                fatal "Unable to find a steamclient.so source from steamcmd runtime."
+        fi
+
+        if [ ! -f "${target}" ] || ! cmp -s "${source}" "${target}"; then
+                cp -f "${source}" "${target}"
+                log "Installed steamclient runtime: ${source} -> ${target}"
+        fi
+
+        if ! file "${target}" | grep -q 'ELF 64-bit'; then
+                fatal "${target} is not an ELF 64-bit shared library: $(file "${target}")"
+        fi
+}
+
+repair_vpks_if_requested() {
+        if [ "${SRCDS_REPAIR_VPKS:-0}" -ne 1 ]; then
+                return
+        fi
+
+        local vpk_dir="${STEAMAPPDIR}/${STEAMAPP}/vpks"
+        local repaired=0
+        local file_name
+
+        if [ ! -d "${vpk_dir}" ]; then
+                log "VPK repair requested, but '${vpk_dir}' does not exist yet. Skipping delete phase."
+        else
+                for file_name in mb2_tf_content.vpk mb2_shared_content.vpk tf2c_overrides.vpk; do
+                        if [ -f "${vpk_dir}/${file_name}" ]; then
+                                rm -f "${vpk_dir}/${file_name}"
+                                repaired=1
+                                log "Removed VPK for repair: ${vpk_dir}/${file_name}"
+                        fi
+                done
+        fi
+
+        if [ "${repaired}" -eq 0 ]; then
+                log "VPK repair requested; no targeted VPK files were removed. Continuing with validate anyway."
+        fi
+
+        log "Re-validating TF2 Classified DS (${CLASSIFIED_APPID}) after VPK repair request."
+        bash "${STEAMCMDDIR}/steamcmd.sh" +force_install_dir "${STEAMAPPDIR}" \
+                                        +login anonymous \
+                                        +app_update "${CLASSIFIED_APPID}" validate \
+                                        +quit
+
+        log "Re-validating TF2 base (${TF2_BASE_APPID:-232250}) after VPK repair request."
+        bash "${STEAMCMDDIR}/steamcmd.sh" +force_install_dir "${TF2_BASE_DIR:-${HOMEDIR}/tf2-dedicated}" \
+                                        +login anonymous \
+                                        +app_update "${TF2_BASE_APPID:-232250}" validate \
+                                        +quit
+}
+
 mkdir -p "${STEAMAPPDIR}" || true
 mkdir -p "${TF2_BASE_DIR:-${HOMEDIR}/tf2-dedicated}" || true
+ensure_writable_dir /tmp
+ensure_writable_dir "${HOMEDIR}/.steam"
 
-APP_VALIDATE_ARGS=("${STEAMAPPID}")
+CLASSIFIED_APPID="${STEAMAPPID:-3557020}"
+TF2_BASE_APPID_VALUE="${TF2_BASE_APPID:-232250}"
+
+APP_VALIDATE_ARGS=("${CLASSIFIED_APPID}")
 if [ "${STEAMAPP_VALIDATE:-1}" -eq 1 ]; then
         APP_VALIDATE_ARGS+=(validate)
 fi
 
-TF2_BASE_VALIDATE_ARGS=("${TF2_BASE_APPID:-232250}")
+TF2_BASE_VALIDATE_ARGS=("${TF2_BASE_APPID_VALUE}")
 if [ "${TF2_BASE_VALIDATE:-1}" -eq 1 ]; then
         TF2_BASE_VALIDATE_ARGS+=(validate)
 fi
 
-log "Updating primary app ${STEAMAPPID} into ${STEAMAPPDIR} (gamedir ${STEAMAPP})."
+log "Updating TF2 Classified DS (${CLASSIFIED_APPID}) into ${STEAMAPPDIR} (gamedir ${STEAMAPP})."
 bash "${STEAMCMDDIR}/steamcmd.sh" +force_install_dir "${STEAMAPPDIR}" \
                                 +login anonymous \
                                 +app_update "${APP_VALIDATE_ARGS[@]}" \
                                 +quit
 
-log "Updating TF2 base content app ${TF2_BASE_APPID:-232250} into ${TF2_BASE_DIR:-${HOMEDIR}/tf2-dedicated} for -tf_path."
+log "Updating TF2 base (${TF2_BASE_APPID_VALUE}) into ${TF2_BASE_DIR:-${HOMEDIR}/tf2-dedicated} for -tf_path."
 bash "${STEAMCMDDIR}/steamcmd.sh" +force_install_dir "${TF2_BASE_DIR:-${HOMEDIR}/tf2-dedicated}" \
                                 +login anonymous \
                                 +app_update "${TF2_BASE_VALIDATE_ARGS[@]}" \
                                 +quit
+
+repair_vpks_if_requested
 
 # Are we in a metamod container and is the metamod folder missing?
 if [ -n "${METAMOD_VERSION:-}" ] && [ ! -d "${STEAMAPPDIR}/${STEAMAPP}/addons/metamod" ]; then
@@ -79,17 +168,24 @@ if [ -d "${STEAMAPPDIR}/${STEAMAPP}/addons/metamod" ]; then
         MM32_BIN="${MM_ROOT}/bin/server.so"
         MM_VDF="${STEAMAPPDIR}/${STEAMAPP}/addons/metamod.vdf"
         if [ -n "${MM64_BIN}" ]; then
-                cat > "${MM_VDF}" <<'VDF'
+                MM_VDF_TARGET="${MM64_BIN#"${STEAMAPPDIR}/${STEAMAPP}/"}"
+                if [ "${MM_VDF_TARGET}" = "${MM64_BIN}" ]; then
+                        fatal "Metamod binary '${MM64_BIN}' is not under game dir '${STEAMAPPDIR}/${STEAMAPP}'."
+                fi
+                cat > "${MM_VDF}" <<VDF
 "Plugin"
 {
-        "file"  "addons/metamod/bin/linux64/server"
+        "file"  "${MM_VDF_TARGET}"
 }
 VDF
-                log "Configured ${MM_VDF} to use addons/metamod/bin/linux64/server"
-                log "Metamod binary info: $(file "${MM64_BIN}")"
-                if file "${MM64_BIN}" | grep -q 'ELF 32-bit'; then
-                        log "ERROR: ${MM64_BIN} is 32-bit; refusing to start x64 server."
-                        exit 1
+                log "Configured ${MM_VDF} to use ${MM_VDF_TARGET}"
+                MM64_FILE_INFO="$(file "${MM64_BIN}")"
+                log "Metamod binary info: ${MM64_FILE_INFO}"
+                if ! echo "${MM64_FILE_INFO}" | grep -q 'ELF 64-bit'; then
+                        fatal "${MM64_BIN} is not 64-bit; refusing to start x64 server."
+                fi
+                if ! echo "${MM64_FILE_INFO}" | grep -q 'shared object'; then
+                        fatal "${MM64_BIN} is not a shared object; refusing to start."
                 fi
         elif [ -f "${MM32_BIN}" ]; then
                 log "ERROR: only 32-bit Metamod binary found at addons/metamod/bin/server.so"
@@ -173,6 +269,14 @@ log "Runtime settings: game=${STEAMAPP} tf_path=${SRCDS_TF_PATH:-${TF2_BASE_DIR:
 log "Local host connect hint: connect 127.0.0.1:${SRCDS_PORT}"
 
 cd "$(dirname "${SRCDS_BINARY}")"
+
+ensure_steamclient_sdk64
+export SteamAppId="${CLASSIFIED_APPID}"
+export SteamGameId="${CLASSIFIED_APPID}"
+printf '%s\n' "${CLASSIFIED_APPID}" > "${STEAMAPPDIR}/steam_appid.txt"
+printf '%s\n' "${CLASSIFIED_APPID}" > "$(pwd)/steam_appid.txt"
+log "Steam runtime check: $(file "${HOMEDIR}/.steam/sdk64/steamclient.so")"
+log "Set SteamAppId=${SteamAppId} and wrote steam_appid.txt in ${STEAMAPPDIR} and $(pwd)."
 
 exec "${SRCDS_BINARY}" -game "${STEAMAPP}" -console -autoupdate \
                         -steam_dir "${STEAMCMDDIR}" \
