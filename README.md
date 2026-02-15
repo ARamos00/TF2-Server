@@ -70,7 +70,7 @@ Confirm:
 - `Configured .../addons/metamod.vdf to use addons/metamod/bin/linux64/server...`
 - `Metamod loader ... contains IServerPluginCallbacks marker.`
 - `SourceMod detected at .../addons/sourcemod` (sourcemod image)
-- `Set SteamAppId=232250, SteamGameId=3557020` (or your explicit overrides)
+- `Set SteamAppId=3557020, SteamGameId=3557020` (or your explicit overrides)
 - no `SteamAPI_Init() failed; create pipe failed`
 - no `Tried to access Steam interface ... before SteamAPI_Init succeeded`
 - server reaches Steam secure mode (no insecure fallback unless explicitly requested)
@@ -196,11 +196,19 @@ SRCDS_MAPCYCLE="mapcycle_default.txt" (value can be overwritten by tf/cfg/server
 SRCDS_SECURED=1 (0 to start the server as insecured)
 SRCDS_SDR_FAKEIP=0 (1 to allow for the Steam Datagram Relay, hiding the server's IP)
 SRCDS_REPLAY=0 (1 to enable replay support)
+SRCDS_DIAG=0 (set to 1 for structured startup diagnostics: appids, paths, steam libs, metamod loader checks)
 STEAMAPP_VALIDATE=1 (x64 images; validate TF2C files on startup to repair corrupted/mismatched VPKs)
 TF2_BASE_VALIDATE=1 (x64 images; validate TF2 base content on startup)
-SRCDS_STEAM_APPID=232250 (x64 images; Steam runtime AppID written to steam_appid.txt and exported as SteamAppId)
+SRCDS_STEAM_APPID=3557020 (x64 images; Steam runtime AppID written to steam_appid.txt and exported as SteamAppId)
 SRCDS_STEAM_GAMEID=3557020 (x64 images; SteamGameId used for game identity/telemetry)
+SRCDS_WIPE_APP_ON_CORRUPTION=0 (set to 1 to wipe app dir and force full reinstall if SteamCMD reports VPK/content corruption)
+STEAMCMD_LOCK_WAIT_SECONDS=900 (wait time for SteamCMD update lock to prevent concurrent updates)
 ```
+
+### TF2 Classified token / networking notes
+- `SRCDS_TOKEN` is required when `SRCDS_SECURED=1`; entrypoint will fail fast on placeholder values and only pass `+sv_setsteamaccount` when a usable token is present.
+- Generate your GSLT for the expected game branch used by your deployment; keep `SRCDS_STEAM_APPID`/`SRCDS_STEAM_GAMEID` aligned with your server runtime unless you intentionally override for troubleshooting.
+- `--net=host` is recommended on Linux for Source-engine servers. If you cannot use host mode, publish `27015/udp`, `27015/tcp`, `27020/udp`, and `27005/udp` explicitly.
 
 ## Config
 The image contains static copies of the competitive config files from [UGC League](https://www.ugcleague.com/files_tf26.cfm#) and [RGL.gg](https://rgl.gg/Public/About/Configs.aspx?r=24). 
