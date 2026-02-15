@@ -5,6 +5,22 @@ log() {
         echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] $*"
 }
 
+find_metamod_linux64_binary() {
+        local mm_root="$1"
+        local candidate
+
+        for candidate in \
+                "${mm_root}/bin/linux64/server.so" \
+                "${mm_root}/bin/linux64/server"; do
+                if [ -f "${candidate}" ]; then
+                        echo "${candidate}"
+                        return 0
+                fi
+        done
+
+        return 1
+}
+
 mkdir -p "${STEAMAPPDIR}" || true
 mkdir -p "${TF2_BASE_DIR:-${HOMEDIR}/tf2-dedicated}" || true
 
@@ -33,16 +49,36 @@ bash "${STEAMCMDDIR}/steamcmd.sh" +force_install_dir "${TF2_BASE_DIR:-${HOMEDIR}
 # Are we in a metamod container and is the metamod folder missing?
 if [ -n "${METAMOD_VERSION:-}" ] && [ ! -d "${STEAMAPPDIR}/${STEAMAPP}/addons/metamod" ]; then
         log "Installing Metamod ${METAMOD_VERSION} (linux64 preferred)."
-        LATESTMM=$(wget -qO- "https://mms.alliedmods.net/mmsdrop/${METAMOD_VERSION}/mmsource-latest-linux64" \
-                || wget -qO- "https://mms.alliedmods.net/mmsdrop/${METAMOD_VERSION}/mmsource-latest-linux")
+        LATESTMM=""
+        if LATESTMM=$(wget -qO- "https://mms.alliedmods.net/mmsdrop/${METAMOD_VERSION}/mmsource-latest-linux64") && [ -n "${LATESTMM}" ]; then
+                log "Using Metamod linux64 drop ${LATESTMM}"
+        else
+                log "WARNING: linux64 Metamod drop lookup failed for ${METAMOD_VERSION}; falling back to linux drop"
+                LATESTMM=$(wget -qO- "https://mms.alliedmods.net/mmsdrop/${METAMOD_VERSION}/mmsource-latest-linux")
+                log "Using fallback Metamod drop ${LATESTMM}"
+        fi
         wget -qO- "https://mms.alliedmods.net/mmsdrop/${METAMOD_VERSION}/${LATESTMM}" | tar xvzf - -C "${STEAMAPPDIR}/${STEAMAPP}"
+
+        MM_ROOT="${STEAMAPPDIR}/${STEAMAPP}/addons/metamod"
+        MM64_BIN="$(find_metamod_linux64_binary "${MM_ROOT}" || true)"
+        if [ -z "${MM64_BIN}" ]; then
+                log "ERROR: Metamod install did not include a linux64 binary."
+                log "Checked: ${MM_ROOT}/bin/linux64/server.so, ${MM_ROOT}/bin/linux64/server"
+                if [ -d "${MM_ROOT}/bin" ]; then
+                        log "Metamod bin tree:"
+                        find "${MM_ROOT}/bin" -maxdepth 3 -type f -print
+                fi
+                exit 1
+        fi
 fi
 
 # Ensure metamod.vdf points at the x64 binary when available.
 if [ -d "${STEAMAPPDIR}/${STEAMAPP}/addons/metamod" ]; then
-        MM64_BIN="${STEAMAPPDIR}/${STEAMAPP}/addons/metamod/bin/linux64/server"
+        MM_ROOT="${STEAMAPPDIR}/${STEAMAPP}/addons/metamod"
+        MM64_BIN="$(find_metamod_linux64_binary "${MM_ROOT}" || true)"
+        MM32_BIN="${MM_ROOT}/bin/server.so"
         MM_VDF="${STEAMAPPDIR}/${STEAMAPP}/addons/metamod.vdf"
-        if [ -f "${MM64_BIN}" ]; then
+        if [ -n "${MM64_BIN}" ]; then
                 cat > "${MM_VDF}" <<'VDF'
 "Plugin"
 {
@@ -55,12 +91,14 @@ VDF
                         log "ERROR: ${MM64_BIN} is 32-bit; refusing to start x64 server."
                         exit 1
                 fi
-        elif [ -f "${STEAMAPPDIR}/${STEAMAPP}/addons/metamod/bin/server.so" ]; then
+        elif [ -f "${MM32_BIN}" ]; then
                 log "ERROR: only 32-bit Metamod binary found at addons/metamod/bin/server.so"
-                log "Binary info: $(file "${STEAMAPPDIR}/${STEAMAPP}/addons/metamod/bin/server.so")"
+                log "Binary info: $(file "${MM32_BIN}")"
+                log "Checked linux64 candidates: ${MM_ROOT}/bin/linux64/server.so, ${MM_ROOT}/bin/linux64/server (missing or not regular files)"
                 exit 1
         else
                 log "WARNING: Metamod directory exists but no loader binary was found."
+                log "Checked linux64 candidates: ${MM_ROOT}/bin/linux64/server.so, ${MM_ROOT}/bin/linux64/server"
         fi
 fi
 
