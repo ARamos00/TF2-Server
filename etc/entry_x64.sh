@@ -113,10 +113,11 @@ steamcmd_app_update_with_retry() {
         local appid="$2"
         local validate_mode="$3"
         local label="$4"
-        local max_attempts="${5:-3}"
+        local max_attempts="${5:-4}"
         local attempt=1
         local args=(+force_install_dir "${install_dir}" +login anonymous +app_update "${appid}")
         local log_file
+        local backoff_s
 
         if [ "${validate_mode}" -eq 1 ]; then
                 args+=(validate)
@@ -134,6 +135,7 @@ steamcmd_app_update_with_retry() {
 
                 if [ "${steamcmd_rc}" -eq 0 ] \
                         && ! grep -Fq 'Timed out waiting for update to start' "${log_file}" \
+                        && ! grep -Fq 'Restarting steamcmd by request' "${log_file}" \
                         && grep -Fq 'Success! App' "${log_file}"; then
                         rm -f "${log_file}"
                         return 0
@@ -146,12 +148,74 @@ steamcmd_app_update_with_retry() {
                 if ! grep -Fq 'Success! App' "${log_file}"; then
                         log "SteamCMD ${label} did not emit a success marker."
                 fi
+                if grep -Fq 'Restarting steamcmd by request' "${log_file}"; then
+                        log "SteamCMD ${label} requested an internal restart; retrying after backoff."
+                fi
+                if grep -Eq 'VPK chunk hash|File corrupted or modified' "${log_file}"; then
+                        log "SteamCMD ${label} reported content integrity errors."
+                        if [ "${SRCDS_WIPE_APP_ON_CORRUPTION:-0}" -eq 1 ]; then
+                                wipe_install_dir_for_reinstall "${install_dir}" "${label}"
+                        fi
+                fi
 
                 rm -f "${log_file}"
+                backoff_s=$((attempt * 5))
+                log "SteamCMD ${label} sleeping ${backoff_s}s before retry."
+                sleep "${backoff_s}"
                 attempt=$((attempt + 1))
         done
 
         fatal "SteamCMD ${label} failed after ${max_attempts} attempts."
+}
+
+steamcmd_with_lock() {
+        local lock_file="${HOMEDIR}/.steam/steamcmd/update.lock"
+
+        mkdir -p "$(dirname "${lock_file}")"
+        exec 9>"${lock_file}"
+        if ! flock -w "${STEAMCMD_LOCK_WAIT_SECONDS:-900}" 9; then
+                fatal "Timed out waiting for SteamCMD lock at ${lock_file}. Another update process may still be running."
+        fi
+
+        "$@"
+        flock -u 9
+}
+
+wipe_install_dir_for_reinstall() {
+        local install_dir="$1"
+        local label="$2"
+
+        case "${install_dir}" in
+                "${HOMEDIR}/"* ) ;;
+                * ) fatal "Refusing to wipe non-home path '${install_dir}' for ${label}." ;;
+        esac
+
+        if [ ! -d "${install_dir}" ]; then
+                log "Wipe requested for ${label}, but directory does not exist: ${install_dir}"
+                return
+        fi
+
+        if [ "$(find "${install_dir}" -mindepth 1 -maxdepth 1 | wc -l)" -eq 0 ]; then
+                log "Wipe requested for ${label}, but directory already empty: ${install_dir}"
+                return
+        fi
+
+        log "SRCDS_WIPE_APP_ON_CORRUPTION=1: wiping install dir for ${label}: ${install_dir}"
+        find "${install_dir}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+}
+
+validate_metamod_binary_interfaces() {
+        local target="$1"
+
+        if ! binary_contains_token "${target}" "CreateInterface"; then
+                log "WARNING: Metamod loader '${target}' does not expose 'CreateInterface' marker. This binary may be incompatible or damaged."
+        fi
+
+        if ! binary_contains_token "${target}" "IServerPluginCallbacks"; then
+                log "WARNING: Metamod loader '${target}' does not contain 'IServerPluginCallbacks' marker. If startup shows 'Could not get IServerPluginCallbacks', install a Metamod build compatible with this engine branch."
+        else
+                log "Metamod loader preflight marker found: IServerPluginCallbacks"
+        fi
 }
 
 ensure_writable_dir() {
@@ -301,10 +365,10 @@ repair_vpks_if_requested() {
         fi
 
         log "Re-validating TF2 Classified DS (${CLASSIFIED_APPID}) after VPK repair request."
-        steamcmd_app_update_with_retry "${STEAMAPPDIR}" "${CLASSIFIED_APPID}" 1 "TF2 Classified DS validate"
+        steamcmd_with_lock steamcmd_app_update_with_retry "${STEAMAPPDIR}" "${CLASSIFIED_APPID}" 1 "TF2 Classified DS validate"
 
         log "Re-validating TF2 base (${TF2_BASE_APPID:-232250}) after VPK repair request."
-        steamcmd_app_update_with_retry "${TF2_BASE_DIR:-${HOMEDIR}/tf2-dedicated}" "${TF2_BASE_APPID:-232250}" 1 "TF2 base validate"
+        steamcmd_with_lock steamcmd_app_update_with_retry "${TF2_BASE_DIR:-${HOMEDIR}/tf2-dedicated}" "${TF2_BASE_APPID:-232250}" 1 "TF2 base validate"
 
         for file_name in mb2_tf_content.vpk mb2_shared_content.vpk tf2c_overrides.vpk; do
                 if [ -f "${vpk_dir}/${file_name}" ]; then
@@ -322,14 +386,14 @@ ensure_writable_dir "${HOMEDIR}/.steam"
 
 CLASSIFIED_APPID="${STEAMAPPID:-3557020}"
 TF2_BASE_APPID_VALUE="${TF2_BASE_APPID:-232250}"
-STEAM_RUNTIME_APPID="${SRCDS_STEAM_APPID:-${TF2_BASE_APPID_VALUE}}"
+STEAM_RUNTIME_APPID="${SRCDS_STEAM_APPID:-${CLASSIFIED_APPID}}"
 STEAM_RUNTIME_GAMEID="${SRCDS_STEAM_GAMEID:-${CLASSIFIED_APPID}}"
 
 log "Updating TF2 Classified DS (${CLASSIFIED_APPID}) into ${STEAMAPPDIR} (gamedir ${STEAMAPP})."
-steamcmd_app_update_with_retry "${STEAMAPPDIR}" "${CLASSIFIED_APPID}" "${STEAMAPP_VALIDATE:-1}" "TF2 Classified DS update"
+steamcmd_with_lock steamcmd_app_update_with_retry "${STEAMAPPDIR}" "${CLASSIFIED_APPID}" "${STEAMAPP_VALIDATE:-1}" "TF2 Classified DS update"
 
 log "Updating TF2 base (${TF2_BASE_APPID_VALUE}) into ${TF2_BASE_DIR:-${HOMEDIR}/tf2-dedicated} for -tf_path."
-steamcmd_app_update_with_retry "${TF2_BASE_DIR:-${HOMEDIR}/tf2-dedicated}" "${TF2_BASE_APPID_VALUE}" "${TF2_BASE_VALIDATE:-1}" "TF2 base update"
+steamcmd_with_lock steamcmd_app_update_with_retry "${TF2_BASE_DIR:-${HOMEDIR}/tf2-dedicated}" "${TF2_BASE_APPID_VALUE}" "${TF2_BASE_VALIDATE:-1}" "TF2 base update"
 
 repair_vpks_if_requested
 
@@ -385,6 +449,7 @@ VDF
                         fatal "Metamod loader ${MM64_TARGET} failed dependency resolution (ldd -r)."
                 fi
                 run_ldd_check "${MM64_BIN}" "Metamod loader ${MM64_TARGET}"
+                validate_metamod_binary_interfaces "${MM64_BIN}"
 
                 MM64_RESOLVED="$(readlink -f "${MM64_BIN}" || true)"
                 log "Metamod loader resolved path: ${MM64_RESOLVED}"
@@ -479,14 +544,16 @@ require_command ldd
 require_command readlink
 require_command strings
 require_command readelf
+require_command flock
 validate_steam_login_token
 
 ensure_steamclient_sdk64
 export SteamAppId="${STEAM_RUNTIME_APPID}"
 export SteamGameId="${STEAM_RUNTIME_GAMEID}"
+SRCDS_LAUNCH_DIR="$(pwd)"
 printf '%s\n' "${STEAM_RUNTIME_APPID}" > "${STEAMAPPDIR}/steam_appid.txt"
 printf '%s\n' "${STEAM_RUNTIME_APPID}" > "${STEAMAPPDIR}/${STEAMAPP}/steam_appid.txt"
-printf '%s\n' "${STEAM_RUNTIME_APPID}" > "$(pwd)/steam_appid.txt"
+printf '%s\n' "${STEAM_RUNTIME_APPID}" > "${SRCDS_LAUNCH_DIR}/steam_appid.txt"
 log "Steam runtime check: $(file -L "${HOMEDIR}/.steam/sdk64/steamclient.so")"
 run_ldd_check "${HOMEDIR}/.steam/sdk64/steamclient.so" "steamclient runtime"
 if [ ! -s "${STEAMAPPDIR}/${STEAMAPP}/steam_appid.txt" ]; then
@@ -494,7 +561,19 @@ if [ ! -s "${STEAMAPPDIR}/${STEAMAPP}/steam_appid.txt" ]; then
 fi
 export LD_LIBRARY_PATH="${HOMEDIR}/.steam/sdk64:${STEAMCMDDIR}/linux64:${LD_LIBRARY_PATH:-}"
 log "Set SteamAppId=${SteamAppId}, SteamGameId=${SteamGameId}, LD_LIBRARY_PATH=${LD_LIBRARY_PATH}"
-log "Wrote steam_appid.txt (${STEAM_RUNTIME_APPID}) in ${STEAMAPPDIR}, ${STEAMAPPDIR}/${STEAMAPP}, and $(pwd)."
+log "Launcher working directory: ${SRCDS_LAUNCH_DIR}"
+log "Wrote steam_appid.txt (${STEAM_RUNTIME_APPID}) in ${STEAMAPPDIR}, ${STEAMAPPDIR}/${STEAMAPP}, and ${SRCDS_LAUNCH_DIR}."
+log "steam_appid contents: root=$(cat "${STEAMAPPDIR}/steam_appid.txt"), game=$(cat "${STEAMAPPDIR}/${STEAMAPP}/steam_appid.txt"), launch=$(cat "${SRCDS_LAUNCH_DIR}/steam_appid.txt")"
+
+SRCDS_TOKEN_ARG="${SRCDS_TOKEN:-}"
+if [ -n "${SRCDS_TOKEN_ARG}" ] && [ "${SRCDS_TOKEN_ARG}" != "0" ] && [ "${SRCDS_TOKEN_ARG}" != "changeme" ]; then
+        TOKEN_LEN="${#SRCDS_TOKEN_ARG}"
+        log "SRCDS token is set (redacted, length=${TOKEN_LEN}); +sv_setsteamaccount will be passed."
+        SV_SETSTEAMACCOUNT_ARGS=(+sv_setsteamaccount "${SRCDS_TOKEN_ARG}")
+else
+        log "SRCDS token is not set to a usable value; +sv_setsteamaccount will not be passed."
+        SV_SETSTEAMACCOUNT_ARGS=()
+fi
 
 emit_diag_snapshot
 
@@ -510,7 +589,7 @@ exec "${SRCDS_BINARY}" -game "${STEAMAPP}" -console -autoupdate \
                         +clientport "${SRCDS_CLIENT_PORT:-27005}" \
                         +maxplayers "${SRCDS_MAXPLAYERS}" \
                         +map "${SRCDS_STARTMAP}" \
-                        +sv_setsteamaccount "${SRCDS_TOKEN}" \
+                        "${SV_SETSTEAMACCOUNT_ARGS[@]}" \
                         +rcon_password "${SRCDS_RCONPW}" \
                         +sv_password "${SRCDS_PW}" \
                         +sv_region "${SRCDS_REGION}" \
