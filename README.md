@@ -75,6 +75,27 @@ Confirm:
 - no `Tried to access Steam interface ... before SteamAPI_Init succeeded`
 - server reaches Steam secure mode (no insecure fallback unless explicitly requested)
 
+### Steamclient symlink validation + diagnostic mode
+- The steam runtime commonly places `/home/steam/.steam/sdk64/steamclient.so` as a symlink to the SteamCMD copy. A plain `file /path/to/steamclient.so` check reports `symbolic link to ...`, which is not enough to validate architecture.
+- The x64 entrypoint now validates the dereferenced file (`readlink -f` + `file -L`) and requires `ELF 64-bit` **and** `shared object`, then runs `ldd -r` and fails on any `not found`/`undefined symbol`.
+- To collect startup evidence without changing default behavior, run with `SRCDS_DIAG=1`:
+
+```console
+$ docker run --rm -it --name tf2classified-diag \
+  -e SRCDS_TOKEN={YOURTOKEN} \
+  -e SRCDS_DIAG=1 \
+  -v $(pwd)/tf2c-data:/home/steam/tf2classified-dedicated \
+  tf2classified:x64
+```
+
+Expected `SRCDS_DIAG=1` markers:
+- steamclient symlink path + resolved real path + `file -L` output + missing `ldd -r` lines (or `none`)
+- `addons/metamod.vdf` contents
+- chosen metamod loader path + binary info + missing `ldd -r` lines (or `none`)
+- listing of `addons/metamod/bin/linux64`
+
+When startup is healthy, logs should show steamclient validation success and no MetaMod interface load errors such as `Could not get IServerPluginCallbacks interface from plugin ...`.
+
 ### In-container verification checklist
 ```console
 $ docker exec tf2classified bash -lc '

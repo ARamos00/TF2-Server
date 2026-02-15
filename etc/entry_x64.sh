@@ -5,6 +5,12 @@ log() {
         echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] $*"
 }
 
+diag_log() {
+        if [ "${SRCDS_DIAG:-0}" -eq 1 ]; then
+                log "[diag] $*"
+        fi
+}
+
 fatal() {
         log "ERROR: $*"
         exit 1
@@ -24,6 +30,11 @@ find_metamod_linux64_binary() {
         done
 
         return 1
+}
+
+collect_ldd_missing() {
+        local target="$1"
+        ldd -r "${target}" 2>&1 | grep -E 'not found|undefined symbol' || true
 }
 
 require_command() {
@@ -65,6 +76,13 @@ choose_metamod_loader_target() {
         local candidate
         local relative
         local selected=""
+        local selected_score=-1
+        local selected_reason=""
+        local file_info
+        local missing
+        local marker_count
+        local marker_details
+        local export_marker=0
 
         for candidate in \
                 "${mm_root}/bin/linux64/server" \
@@ -73,24 +91,69 @@ choose_metamod_loader_target() {
                         continue
                 fi
 
-                if ! file "${candidate}" | grep -q 'ELF 64-bit'; then
+                file_info="$(file -L "${candidate}")"
+                log "Metamod candidate ${candidate}: ${file_info}"
+                if ! echo "${file_info}" | grep -q 'ELF 64-bit'; then
                         log "Skipping Metamod loader candidate (not ELF 64-bit): ${candidate}"
                         continue
                 fi
+                if ! echo "${file_info}" | grep -q 'shared object'; then
+                        log "Skipping Metamod loader candidate (not shared object): ${candidate}"
+                        continue
+                fi
 
-                if binary_contains_token "${candidate}" "IServerPluginCallbacks"; then
+                missing="$(collect_ldd_missing "${candidate}")"
+                if [ -n "${missing}" ]; then
+                        log "Skipping Metamod loader candidate (ldd -r unresolved symbols): ${candidate}"
+                        echo "${missing}" | sed 's/^/[ldd-missing] /'
+                        continue
+                fi
+
+                marker_count=0
+                marker_details=""
+                if strings -a "${candidate}" | grep -Fq 'IServerPluginCallbacks'; then
+                        marker_count=$((marker_count + 1))
+                        marker_details="${marker_details} IServerPluginCallbacks"
+                fi
+                if strings -a "${candidate}" | grep -Fq 'CreateInterface'; then
+                        marker_count=$((marker_count + 1))
+                        marker_details="${marker_details} CreateInterface"
+                fi
+                if strings -a "${candidate}" | grep -Eq 'Metamod:Source|ISmmAPI|ISmmPlugin'; then
+                        marker_count=$((marker_count + 1))
+                        marker_details="${marker_details} Metamod-identity"
+                fi
+                if readelf -Ws "${candidate}" 2>/dev/null | grep -Eq 'CreateInterface|GetEngineFactory'; then
+                        export_marker=1
+                        marker_details="${marker_details} exported-factory"
+                else
+                        export_marker=0
+                fi
+
+                if [ $((marker_count + export_marker)) -le 0 ]; then
+                        log "Skipping Metamod loader candidate (no deterministic loader markers): ${candidate}"
+                        continue
+                fi
+
+                if [ $((marker_count + export_marker)) -gt "${selected_score}" ]; then
                         selected="${candidate}"
-                        break
+                        selected_score=$((marker_count + export_marker))
+                        selected_reason="markers:${marker_details# }"
                 fi
         done
 
         if [ -z "${selected}" ]; then
-                selected="$(find_metamod_linux64_binary "${mm_root}" || true)"
-        fi
-
-        if [ -z "${selected}" ]; then
                 return 1
         fi
+
+        if [ -f "${mm_root}/bin/linux64/server.so" ] && [ "${selected}" = "${mm_root}/bin/linux64/server.so" ] && [ ! -e "${mm_root}/bin/linux64/server" ]; then
+                ln -s "server.so" "${mm_root}/bin/linux64/server"
+                log "Created Metamod compatibility symlink: ${mm_root}/bin/linux64/server -> server.so"
+                selected="${mm_root}/bin/linux64/server"
+                selected_reason="${selected_reason},preferred-no-extension-path"
+        fi
+
+        log "Selected Metamod loader candidate: ${selected} (${selected_reason})"
 
         relative="${selected#"${game_dir}/"}"
         if [ "${relative}" = "${selected}" ]; then
@@ -183,11 +246,91 @@ ensure_steamclient_sdk64() {
         mkdir -p "${HOMEDIR}/.steam/steamcmd/linux64"
         cp -f "${source}" "${HOMEDIR}/.steam/steamcmd/linux64/steamclient.so"
 
-        if ! file "${target}" | grep -q 'ELF 64-bit'; then
-                fatal "${target} is not an ELF 64-bit shared library: $(file "${target}")"
+        local resolved_target
+        local file_output
+        local missing
+
+        resolved_target="$(readlink -f "${target}" || true)"
+        if [ -z "${resolved_target}" ] || [ ! -f "${resolved_target}" ]; then
+                fatal "Unable to resolve steamclient target '${target}' to a real file."
         fi
 
-        run_ldd_check "${target}" "steamclient.so"
+        file_output="$(file -L "${resolved_target}")"
+        log "steamclient symlink path: ${target}"
+        log "steamclient resolved path: ${resolved_target}"
+        log "steamclient file -L: ${file_output}"
+
+        if ! echo "${file_output}" | grep -q 'ELF 64-bit'; then
+                fatal "${target} resolved to non-ELF64 file: ${file_output}"
+        fi
+        if ! echo "${file_output}" | grep -q 'shared object'; then
+                fatal "${target} resolved file is not a shared object: ${file_output}"
+        fi
+
+        missing="$(collect_ldd_missing "${resolved_target}")"
+        if [ -n "${missing}" ]; then
+                echo "${missing}" | sed 's/^/[steamclient-ldd-missing] /'
+                fatal "steamclient.so failed dependency resolution (ldd -r)."
+        fi
+        log "steamclient ldd -r summary: no missing dependencies or undefined symbols"
+
+        run_ldd_check "${resolved_target}" "steamclient.so"
+}
+
+emit_diag_snapshot() {
+        if [ "${SRCDS_DIAG:-0}" -ne 1 ]; then
+                return
+        fi
+
+        local steam_target="${HOMEDIR}/.steam/sdk64/steamclient.so"
+        local steam_real=""
+        local steam_file=""
+        local steam_missing=""
+        local mm_vdf="${STEAMAPPDIR}/${STEAMAPP}/addons/metamod.vdf"
+        local mm_path=""
+        local mm_abs=""
+        local mm_file=""
+        local mm_missing=""
+        local mm_dir="${STEAMAPPDIR}/${STEAMAPP}/addons/metamod/bin/linux64"
+
+        steam_real="$(readlink -f "${steam_target}" 2>/dev/null || true)"
+        steam_file="$(file -L "${steam_target}" 2>&1 || true)"
+        steam_missing="$(collect_ldd_missing "${steam_target}")"
+        diag_log "steamclient symlink path: ${steam_target}"
+        diag_log "steamclient resolved path: ${steam_real}"
+        diag_log "steamclient file -L: ${steam_file}"
+        if [ -n "${steam_missing}" ]; then
+                while IFS= read -r line; do
+                        diag_log "steamclient ldd missing: ${line}"
+                done <<< "${steam_missing}"
+        else
+                diag_log "steamclient ldd missing: none"
+        fi
+
+        if [ -f "${mm_vdf}" ]; then
+                diag_log "metamod.vdf contents:"
+                sed 's/^/[diag] /' "${mm_vdf}"
+                mm_path="$(awk -F'"' '/"file"/ {print $4}' "${mm_vdf}" | head -n 1)"
+                if [ -n "${mm_path}" ]; then
+                        mm_abs="${STEAMAPPDIR}/${STEAMAPP}/${mm_path}"
+                        mm_file="$(file -L "${mm_abs}" 2>&1 || true)"
+                        mm_missing="$(collect_ldd_missing "${mm_abs}")"
+                        diag_log "chosen metamod loader path: ${mm_path}"
+                        diag_log "chosen metamod loader file: ${mm_file}"
+                        if [ -n "${mm_missing}" ]; then
+                                while IFS= read -r line; do
+                                        diag_log "chosen metamod loader ldd missing: ${line}"
+                                done <<< "${mm_missing}"
+                        else
+                                diag_log "chosen metamod loader ldd missing: none"
+                        fi
+                fi
+        fi
+
+        if [ -d "${mm_dir}" ]; then
+                diag_log "metamod bin/linux64 listing:"
+                find "${mm_dir}" -maxdepth 1 -mindepth 1 -printf '[diag] %M %u:%g %p -> %l\n'
+        fi
 }
 
 repair_vpks_if_requested() {
@@ -386,6 +529,9 @@ cd "$(dirname "${SRCDS_BINARY}")"
 
 require_command file
 require_command ldd
+require_command readlink
+require_command strings
+require_command readelf
 
 ensure_steamclient_sdk64
 export SteamAppId="${CLASSIFIED_APPID}"
@@ -401,6 +547,8 @@ fi
 export LD_LIBRARY_PATH="${HOMEDIR}/.steam/sdk64:${STEAMCMDDIR}/linux64:${LD_LIBRARY_PATH:-}"
 log "Set SteamAppId=${SteamAppId}, SteamGameId=${SteamGameId}, LD_LIBRARY_PATH=${LD_LIBRARY_PATH}"
 log "Wrote steam_appid.txt in ${STEAMAPPDIR}, ${STEAMAPPDIR}/${STEAMAPP}, and $(pwd)."
+
+emit_diag_snapshot
 
 exec "${SRCDS_BINARY}" -game "${STEAMAPP}" -console -autoupdate \
                         -steam_dir "${STEAMCMDDIR}" \

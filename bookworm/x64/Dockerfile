@@ -21,6 +21,7 @@ RUN set -x \
 		wget \
 		ca-certificates \
 		file \
+		binutils \
 		zlib1g \
 		libncurses6 \
 		libbz2-1.0 \
