@@ -70,7 +70,7 @@ Confirm:
 - `Configured .../addons/metamod.vdf to use addons/metamod/bin/linux64/server...`
 - `Metamod loader ... contains IServerPluginCallbacks marker.`
 - `SourceMod detected at .../addons/sourcemod` (sourcemod image)
-- `Set SteamAppId=3557020, SteamGameId=3557020`
+- `Set SteamAppId=232250, SteamGameId=3557020` (or your explicit overrides)
 - no `SteamAPI_Init() failed; create pipe failed`
 - no `Tried to access Steam interface ... before SteamAPI_Init succeeded`
 - server reaches Steam secure mode (no insecure fallback unless explicitly requested)
@@ -196,6 +196,8 @@ SRCDS_SDR_FAKEIP=0 (1 to allow for the Steam Datagram Relay, hiding the server's
 SRCDS_REPLAY=0 (1 to enable replay support)
 STEAMAPP_VALIDATE=1 (x64 images; validate TF2C files on startup to repair corrupted/mismatched VPKs)
 TF2_BASE_VALIDATE=1 (x64 images; validate TF2 base content on startup)
+SRCDS_STEAM_APPID=232250 (x64 images; Steam runtime AppID written to steam_appid.txt and exported as SteamAppId)
+SRCDS_STEAM_GAMEID=3557020 (x64 images; SteamGameId used for game identity/telemetry)
 ```
 
 ## Config
