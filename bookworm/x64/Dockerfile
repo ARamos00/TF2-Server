@@ -1,7 +1,7 @@
 ###########################################################
 # Dockerfile that builds a TF2 Gameserver
 ###########################################################
-FROM cm2network/steamcmd:root AS build_stage
+FROM cm2network/steamcmd:root-trixie AS build_stage
 
 LABEL maintainer="walentinlamonos@gmail.com"
 
