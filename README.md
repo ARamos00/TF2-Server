@@ -52,36 +52,47 @@ docker run -d --name tf2classified `
 - `27005/udp` (client port configured by `SRCDS_CLIENT_PORT`)
 
 ### Corruption / pure-server remediation
-If logs show `VPK chunk hash does not match`, force a clean validation on next start:
+If logs show `VPK chunk hash does not match`, run a one-time targeted repair on next start:
 ```console
 $ docker stop tf2classified
-$ docker run --rm -it -v $(pwd)/tf2c-data:/home/steam/tf2classified-dedicated tf2classified:x64 bash -lc 'STEAMAPP_VALIDATE=1 TF2_BASE_VALIDATE=1 /home/steam/entry_x64.sh'
+$ docker run --rm -it --name tf2classified-repair \
+  -e SRCDS_REPAIR_VPKS=1 -e STEAMAPP_VALIDATE=1 -e TF2_BASE_VALIDATE=1 \
+  -v $(pwd)/tf2c-data:/home/steam/tf2classified-dedicated \
+  tf2classified:x64
 ```
-The startup script now logs both AppIDs and install directories so accidental AppID drift is visible in `docker logs`.
+This deletes only the known-bad VPKs (`mb2_tf_content.vpk`, `mb2_shared_content.vpk`, `tf2c_overrides.vpk`), runs validate for appids `3557020` and `232250`, and fails start if files were not restored.
 
-### Smoke test checklist
+### Good startup log markers
 ```console
 $ docker logs -f tf2classified
 ```
 Confirm:
-- `Updating primary app 3557020`
-- `Updating TF2 base content app 232250`
-- `Configured .../addons/metamod.vdf to use addons/metamod/bin/linux64/server` (metamod/sourcemod image variants)
-- no `ELFCLASS32` message
-- `Using Source dedicated server launcher` and `Runtime settings: game=tf2classified`
+- `Configured .../addons/metamod.vdf to use addons/metamod/bin/linux64/server...`
+- `Metamod loader ... contains IServerPluginCallbacks marker.`
+- `SourceMod detected at .../addons/sourcemod` (sourcemod image)
+- `Set SteamAppId=3557020, SteamGameId=3557020`
+- no `SteamAPI_Init() failed; create pipe failed`
+- no `Tried to access Steam interface ... before SteamAPI_Init succeeded`
+- server reaches Steam secure mode (no insecure fallback unless explicitly requested)
 
-### Metamod x64 verification snippet
+### In-container verification checklist
 ```console
 $ docker exec tf2classified bash -lc '
 set -e
-ls -R /home/steam/tf2classified-dedicated/tf2classified/addons/metamod/bin
-find /home/steam/tf2classified-dedicated/tf2classified/addons/metamod -maxdepth 3 -type f \(-name "server*" -o -name "*.so" \)
-file /home/steam/tf2classified-dedicated/tf2classified/addons/metamod/bin/server.so || true
-file /home/steam/tf2classified-dedicated/tf2classified/addons/metamod/bin/linux64/server || true
-file /home/steam/tf2classified-dedicated/tf2classified/addons/metamod/bin/linux64/server.so || true
+MMVDF=/home/steam/tf2classified-dedicated/tf2classified/addons/metamod.vdf
+MMBIN=$(awk -F'"' '/"file"/ {print $4}' "$MMVDF")
+echo "metamod.vdf -> $MMBIN"
+file "/home/steam/tf2classified-dedicated/tf2classified/$MMBIN"
+ldd -r "/home/steam/tf2classified-dedicated/tf2classified/$MMBIN"
+file /home/steam/.steam/sdk64/steamclient.so
+ldd -r /home/steam/.steam/sdk64/steamclient.so
+echo "SteamAppId=$SteamAppId SteamGameId=$SteamGameId"
+for f in mb2_tf_content.vpk mb2_shared_content.vpk tf2c_overrides.vpk; do
+  test -f "/home/steam/tf2classified-dedicated/tf2classified/vpks/$f" && echo "present: $f"
+done
 '
 ```
-Expect one of the `linux64` files above to report `ELF 64-bit` and never rely on `addons/metamod/bin/server.so` in x64 mode.
+The `ldd -r` checks must not show `not found` or `undefined symbol`.
 
 ## Hosting a simple game server
 
