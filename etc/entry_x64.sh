@@ -310,6 +310,8 @@ ensure_writable_dir "${HOMEDIR}/.steam"
 
 CLASSIFIED_APPID="${STEAMAPPID:-3557020}"
 TF2_BASE_APPID_VALUE="${TF2_BASE_APPID:-232250}"
+STEAM_RUNTIME_APPID="${SRCDS_STEAM_APPID:-${TF2_BASE_APPID_VALUE}}"
+STEAM_RUNTIME_GAMEID="${SRCDS_STEAM_GAMEID:-${CLASSIFIED_APPID}}"
 
 log "Updating TF2 Classified DS (${CLASSIFIED_APPID}) into ${STEAMAPPDIR} (gamedir ${STEAMAPP})."
 steamcmd_app_update_with_retry "${STEAMAPPDIR}" "${CLASSIFIED_APPID}" "${STEAMAPP_VALIDATE:-1}" "TF2 Classified DS update"
@@ -467,11 +469,11 @@ require_command strings
 require_command readelf
 
 ensure_steamclient_sdk64
-export SteamAppId="${CLASSIFIED_APPID}"
-export SteamGameId="${CLASSIFIED_APPID}"
-printf '%s\n' "${CLASSIFIED_APPID}" > "${STEAMAPPDIR}/steam_appid.txt"
-printf '%s\n' "${CLASSIFIED_APPID}" > "${STEAMAPPDIR}/${STEAMAPP}/steam_appid.txt"
-printf '%s\n' "${CLASSIFIED_APPID}" > "$(pwd)/steam_appid.txt"
+export SteamAppId="${STEAM_RUNTIME_APPID}"
+export SteamGameId="${STEAM_RUNTIME_GAMEID}"
+printf '%s\n' "${STEAM_RUNTIME_APPID}" > "${STEAMAPPDIR}/steam_appid.txt"
+printf '%s\n' "${STEAM_RUNTIME_APPID}" > "${STEAMAPPDIR}/${STEAMAPP}/steam_appid.txt"
+printf '%s\n' "${STEAM_RUNTIME_APPID}" > "$(pwd)/steam_appid.txt"
 log "Steam runtime check: $(file -L "${HOMEDIR}/.steam/sdk64/steamclient.so")"
 run_ldd_check "${HOMEDIR}/.steam/sdk64/steamclient.so" "steamclient runtime"
 if [ ! -s "${STEAMAPPDIR}/${STEAMAPP}/steam_appid.txt" ]; then
@@ -479,7 +481,7 @@ if [ ! -s "${STEAMAPPDIR}/${STEAMAPP}/steam_appid.txt" ]; then
 fi
 export LD_LIBRARY_PATH="${HOMEDIR}/.steam/sdk64:${STEAMCMDDIR}/linux64:${LD_LIBRARY_PATH:-}"
 log "Set SteamAppId=${SteamAppId}, SteamGameId=${SteamGameId}, LD_LIBRARY_PATH=${LD_LIBRARY_PATH}"
-log "Wrote steam_appid.txt in ${STEAMAPPDIR}, ${STEAMAPPDIR}/${STEAMAPP}, and $(pwd)."
+log "Wrote steam_appid.txt (${STEAM_RUNTIME_APPID}) in ${STEAMAPPDIR}, ${STEAMAPPDIR}/${STEAMAPP}, and $(pwd)."
 
 emit_diag_snapshot
 
