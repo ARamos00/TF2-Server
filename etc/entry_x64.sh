@@ -1,4 +1,6 @@
 #!/bin/bash
+set -euo pipefail
+
 mkdir -p "${STEAMAPPDIR}" || true
 
 bash "${STEAMCMDDIR}/steamcmd.sh" +force_install_dir "${STEAMAPPDIR}" \
@@ -7,13 +9,13 @@ bash "${STEAMCMDDIR}/steamcmd.sh" +force_install_dir "${STEAMAPPDIR}" \
 				+quit
 
 # Are we in a metamod container and is the metamod folder missing?
-if  [ ! -z "$METAMOD_VERSION" ] && [ ! -d "${STEAMAPPDIR}/${STEAMAPP}/addons/metamod" ]; then
+if [ -n "${METAMOD_VERSION:-}" ] && [ ! -d "${STEAMAPPDIR}/${STEAMAPP}/addons/metamod" ]; then
         LATESTMM=$(wget -qO- https://mms.alliedmods.net/mmsdrop/"${METAMOD_VERSION}"/mmsource-latest-linux)
         wget -qO- https://mms.alliedmods.net/mmsdrop/"${METAMOD_VERSION}"/"${LATESTMM}" | tar xvzf - -C "${STEAMAPPDIR}/${STEAMAPP}"
 fi
 
 # Are we in a sourcemod container and is the sourcemod folder missing?
-if  [ ! -z "$SOURCEMOD_VERSION" ] && [ ! -d "${STEAMAPPDIR}/${STEAMAPP}/addons/sourcemod" ]; then
+if [ -n "${SOURCEMOD_VERSION:-}" ] && [ ! -d "${STEAMAPPDIR}/${STEAMAPP}/addons/sourcemod" ]; then
         LATESTSM=$(wget -qO- https://sm.alliedmods.net/smdrop/"${SOURCEMOD_VERSION}"/sourcemod-latest-linux)
         wget -qO- https://sm.alliedmods.net/smdrop/"${SOURCEMOD_VERSION}"/"${LATESTSM}" | tar xvzf - -C "${STEAMAPPDIR}/${STEAMAPP}"
 fi
@@ -37,19 +39,19 @@ fi
 
 SERVER_SECURITY_FLAG="";
 
-if [ "$SRCDS_SECURED" -eq 0 ]; then
+if [ "${SRCDS_SECURED:-1}" -eq 0 ]; then
         SERVER_SECURITY_FLAG="-insecure";
 fi
 
 SERVER_FAKEIP_FLAG="";
 
-if [ "$SRCDS_SDR_FAKEIP" -eq 1 ]; then
+if [ "${SRCDS_SDR_FAKEIP:-0}" -eq 1 ]; then
         SERVER_FAKEIP_FLAG="-enablefakeip";
 fi
 
 REPLAY_FLAG="";
 
-if [ "$SRCDS_REPLAY" -eq 1 ]; then
+if [ "${SRCDS_REPLAY:-0}" -eq 1 ]; then
         REPLAY_FLAG="-replay";
 fi
 
@@ -73,7 +75,7 @@ fi
 
 cd "$(dirname "${SRCDS_BINARY}")"
 
-bash "${SRCDS_BINARY}" -game "${STEAMAPP}" -console -autoupdate \
+exec "${SRCDS_BINARY}" -game "${STEAMAPP}" -console -autoupdate \
                         -steam_dir "${STEAMCMDDIR}" \
                         -steamcmd_script "${HOMEDIR}/${STEAMAPP}_update.txt" \
                         -usercon \

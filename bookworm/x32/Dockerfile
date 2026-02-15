@@ -18,13 +18,13 @@ RUN set -x \
 	# Install, update & upgrade packages
 	&& apt-get update \
 	&& apt-get install -y --no-install-recommends --no-install-suggests \
-		wget=1.21.3-1+deb12u1 \
-		ca-certificates=20230311+deb12u1 \
-		lib32z1=1:1.2.13.dfsg-1 \
-		libncurses5:i386=6.4-4 \
-		libbz2-1.0:i386=1.0.8-5+b1 \
-		libtinfo5:i386=6.4-4 \
-		libcurl3-gnutls:i386=7.88.1-10+deb12u5 \
+		wget \
+		ca-certificates \
+		lib32z1 \
+		libncurses5:i386 \
+		libbz2-1.0:i386 \
+		libtinfo5:i386 \
+		libcurl3-gnutls:i386 \
 	&& mkdir -p "${STEAMAPPDIR}" \
 	# Create autoupdate config
 	&& { \
