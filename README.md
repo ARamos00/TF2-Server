@@ -81,6 +81,7 @@ SRCDS_RCONPW="changeme" (value can be overwritten by tf/cfg/server.cfg)
 SRCDS_PW="changeme" (value can be overwritten by tf/cfg/server.cfg) 
 SRCDS_PORT=27015
 SRCDS_TV_PORT=27020
+SRCDS_CLIENT_PORT=27005
 SRCDS_IP="0" (local ip to bind)
 SRCDS_FPSMAX=300
 SRCDS_TICKRATE=66
