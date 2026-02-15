@@ -8,6 +8,8 @@ LABEL maintainer="walentinlamonos@gmail.com"
 ENV STEAMAPPID=3557020
 ENV STEAMAPP=tf2classified
 ENV STEAMAPPDIR="${HOMEDIR}/${STEAMAPP}-dedicated"
+ENV TF2_BASE_APPID=232250
+ENV TF2_BASE_DIR="${HOMEDIR}/tf2-dedicated"
 
 COPY "etc/entry_x64.sh" "${HOMEDIR}/entry_x64.sh"
 COPY "etc/cfg" "${STEAMAPPDIR}/${STEAMAPP}/cfg/"
@@ -33,8 +35,16 @@ RUN set -x \
 		echo 'app_update '"${STEAMAPPID}"' validate'; \
 		echo 'quit'; \
 	   } > "${HOMEDIR}/${STEAMAPP}_update.txt" \
+	&& { \
+		echo '@ShutdownOnFailedCommand 1'; \
+		echo '@NoPromptForPassword 1'; \
+		echo 'force_install_dir '"${TF2_BASE_DIR}"''; \
+		echo 'login anonymous'; \
+		echo 'app_update '"${TF2_BASE_APPID}"' validate'; \
+		echo 'quit'; \
+	   } > "${HOMEDIR}/tf2_base_update.txt" \
 	&& chmod +x "${HOMEDIR}/entry_x64.sh" \
-	&& chown -R "${USER}:${USER}" "${HOMEDIR}/entry_x64.sh" "${STEAMAPPDIR}" "${HOMEDIR}/${STEAMAPP}_update.txt" \
+	&& chown -R "${USER}:${USER}" "${HOMEDIR}/entry_x64.sh" "${STEAMAPPDIR}" "${TF2_BASE_DIR}" "${HOMEDIR}/${STEAMAPP}_update.txt" "${HOMEDIR}/tf2_base_update.txt" \
 	# Clean up
 	&& rm -rf /var/lib/apt/lists/*
 
@@ -61,7 +71,8 @@ ENV SRCDS_FPSMAX=300 \
 	SRCDS_MAPCYCLE="mapcycle.txt" \
 	SRCDS_SECURED=1 \
 	SRCDS_SDR_FAKEIP=0 \
-	SRCDS_REPLAY=0
+	SRCDS_REPLAY=0 \
+	SRCDS_TF_PATH="${TF2_BASE_DIR}"
 
 # Switch to user
 USER ${USER}

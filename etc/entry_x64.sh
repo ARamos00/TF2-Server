@@ -2,10 +2,16 @@
 set -euo pipefail
 
 mkdir -p "${STEAMAPPDIR}" || true
+mkdir -p "${TF2_BASE_DIR:-${HOMEDIR}/tf2-dedicated}" || true
 
 bash "${STEAMCMDDIR}/steamcmd.sh" +force_install_dir "${STEAMAPPDIR}" \
 				+login anonymous \
 				+app_update "${STEAMAPPID}" \
+				+quit
+
+bash "${STEAMCMDDIR}/steamcmd.sh" +force_install_dir "${TF2_BASE_DIR:-${HOMEDIR}/tf2-dedicated}" \
+				+login anonymous \
+				+app_update "${TF2_BASE_APPID:-232250}" \
 				+quit
 
 # Are we in a metamod container and is the metamod folder missing?
@@ -88,6 +94,7 @@ cd "$(dirname "${SRCDS_BINARY}")"
 exec "${SRCDS_BINARY}" -game "${STEAMAPP}" -console -autoupdate \
                         -steam_dir "${STEAMCMDDIR}" \
                         -steamcmd_script "${HOMEDIR}/${STEAMAPP}_update.txt" \
+                        -tf_path "${SRCDS_TF_PATH:-${TF2_BASE_DIR:-${HOMEDIR}/tf2-dedicated}}" \
                         -usercon \
                         +fps_max "${SRCDS_FPSMAX}" \
                         -tickrate "${SRCDS_TICKRATE}" \
