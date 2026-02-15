@@ -5,9 +5,9 @@ FROM cm2network/steamcmd:root-trixie AS build_stage
 
 LABEL maintainer="walentinlamonos@gmail.com"
 
-ENV STEAMAPPID 3557020
-ENV STEAMAPP tf2classified
-ENV STEAMAPPDIR "${HOMEDIR}/${STEAMAPP}-dedicated"
+ENV STEAMAPPID=3557020
+ENV STEAMAPP=tf2classified
+ENV STEAMAPPDIR="${HOMEDIR}/${STEAMAPP}-dedicated"
 
 COPY "etc/entry_x64.sh" "${HOMEDIR}/entry_x64.sh"
 COPY "etc/cfg" "${STEAMAPPDIR}/${STEAMAPP}/cfg/"
@@ -19,9 +19,9 @@ RUN set -x \
 		wget \
 		ca-certificates \
 		zlib1g \
-		libncurses5 \
+		libncurses6 \
 		libbz2-1.0 \
-		libtinfo5 \
+		libtinfo6 \
 		libcurl3-gnutls \
 	&& mkdir -p "${STEAMAPPDIR}" \
 	# Create autoupdate config
@@ -77,8 +77,8 @@ EXPOSE 27015/tcp \
 
 FROM bookworm-base AS bookworm-metamod
 
-ENV METAMOD_VERSION 1.12
+ENV METAMOD_VERSION=1.12
 
 FROM bookworm-metamod AS bookworm-sourcemod
 
-ENV SOURCEMOD_VERSION 1.12
+ENV SOURCEMOD_VERSION=1.12
