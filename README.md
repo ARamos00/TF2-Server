@@ -70,6 +70,19 @@ Confirm:
 - no `ELFCLASS32` message
 - `Using Source dedicated server launcher` and `Runtime settings: game=tf2classified`
 
+### Metamod x64 verification snippet
+```console
+$ docker exec tf2classified bash -lc '
+set -e
+ls -R /home/steam/tf2classified-dedicated/tf2classified/addons/metamod/bin
+find /home/steam/tf2classified-dedicated/tf2classified/addons/metamod -maxdepth 3 -type f \(-name "server*" -o -name "*.so" \)
+file /home/steam/tf2classified-dedicated/tf2classified/addons/metamod/bin/server.so || true
+file /home/steam/tf2classified-dedicated/tf2classified/addons/metamod/bin/linux64/server || true
+file /home/steam/tf2classified-dedicated/tf2classified/addons/metamod/bin/linux64/server.so || true
+'
+```
+Expect one of the `linux64` files above to report `ELF 64-bit` and never rely on `addons/metamod/bin/server.so` in x64 mode.
+
 ## Hosting a simple game server
 
 Running on the *host* interface (recommended):<br/>
