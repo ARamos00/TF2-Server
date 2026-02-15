@@ -16,6 +16,18 @@ fatal() {
         exit 1
 }
 
+validate_steam_login_token() {
+        local token="${SRCDS_TOKEN:-}"
+
+        if [ "${SRCDS_SECURED:-1}" -eq 0 ]; then
+                return
+        fi
+
+        if [ -z "${token}" ] || [ "${token}" = "0" ] || [ "${token}" = "changeme" ]; then
+                fatal "SRCDS_SECURED=1 requires a valid SRCDS_TOKEN (GSLT). Missing/placeholder tokens can cause SteamAPI_Init failures like 'Tried to access Steam interface ... before SteamAPI_Init succeeded'."
+        fi
+}
+
 find_metamod_linux64_binary() {
         local mm_root="$1"
         local candidate
@@ -467,6 +479,7 @@ require_command ldd
 require_command readlink
 require_command strings
 require_command readelf
+validate_steam_login_token
 
 ensure_steamclient_sdk64
 export SteamAppId="${STEAM_RUNTIME_APPID}"

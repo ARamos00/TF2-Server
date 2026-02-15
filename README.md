@@ -75,6 +75,8 @@ Confirm:
 - no `Tried to access Steam interface ... before SteamAPI_Init succeeded`
 - server reaches Steam secure mode (no insecure fallback unless explicitly requested)
 
+If you do see `Tried to access Steam interface ... before SteamAPI_Init succeeded`, first verify `SRCDS_TOKEN` is a real GSLT (not `0`/`changeme`) when `SRCDS_SECURED=1`. The x64 entrypoint now fails fast with a clear startup error when a placeholder token is used in secure mode.
+
 ### Steamclient symlink validation + diagnostic mode
 - The steam runtime commonly places `/home/steam/.steam/sdk64/steamclient.so` as a symlink to the SteamCMD copy. A plain `file /path/to/steamclient.so` check reports `symbolic link to ...`, which is not enough to validate architecture.
 - The x64 entrypoint now validates the dereferenced file (`readlink -f` + `file -L`) and requires `ELF 64-bit` **and** `shared object`, then runs `ldd -r` and fails on any `not found`/`undefined symbol`.
