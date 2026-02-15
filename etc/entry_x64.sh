@@ -55,23 +55,33 @@ if [ "${SRCDS_REPLAY:-0}" -eq 1 ]; then
         REPLAY_FLAG="-replay";
 fi
 
-SRCDS_BINARY="${STEAMAPPDIR}/srcds_run_64"
-if [ ! -x "${SRCDS_BINARY}" ]; then
-        SRCDS_BINARY="${STEAMAPPDIR}/srcds_run"
-fi
+SRCDS_BINARY=""
 
-if [ ! -x "${SRCDS_BINARY}" ]; then
-        DETECTED_SRCDS_BINARY=$(find "${STEAMAPPDIR}" -maxdepth 4 -type f \( -name srcds_run_64 -o -name srcds_run \) | head -n 1)
+for CANDIDATE in \
+        "${STEAMAPPDIR}/srcds_run_64" \
+        "${STEAMAPPDIR}/srcds_run" \
+        "${STEAMAPPDIR}/srcds.sh" \
+        "${STEAMAPPDIR}/srcds_linux64"; do
+        if [ -x "${CANDIDATE}" ]; then
+                SRCDS_BINARY="${CANDIDATE}"
+                break
+        fi
+done
+
+if [ -z "${SRCDS_BINARY}" ]; then
+        DETECTED_SRCDS_BINARY=$(find "${STEAMAPPDIR}" -maxdepth 4 -type f \( -name srcds_run_64 -o -name srcds_run -o -name srcds.sh -o -name srcds_linux64 \) | head -n 1)
         if [ -n "${DETECTED_SRCDS_BINARY}" ]; then
                 SRCDS_BINARY="${DETECTED_SRCDS_BINARY}"
                 echo "Detected Source dedicated server launcher at '${SRCDS_BINARY}'"
         else
-                echo "Could not find srcds_run or srcds_run_64 under '${STEAMAPPDIR}'."
+                echo "Could not find srcds_run_64, srcds_run, srcds.sh, or srcds_linux64 under '${STEAMAPPDIR}'."
                 echo "Contents of install directory:"
                 find "${STEAMAPPDIR}" -maxdepth 2 -mindepth 1 -print
                 exit 1
         fi
 fi
+
+echo "Using Source dedicated server launcher '${SRCDS_BINARY}'"
 
 cd "$(dirname "${SRCDS_BINARY}")"
 
