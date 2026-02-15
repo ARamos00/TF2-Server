@@ -16,6 +16,62 @@ fatal() {
         exit 1
 }
 
+warn() {
+        log "WARNING: $*"
+}
+
+passfail() {
+        local status="$1"
+        local message="$2"
+        log "[${status}] ${message}"
+}
+
+resolve_realpath() {
+        local target="$1"
+        readlink -f "${target}" 2>/dev/null || true
+}
+
+declare -a PREFLIGHT_FAILURES=()
+
+record_check() {
+        local ok="$1"
+        local label="$2"
+        local details="${3:-}"
+
+        if [ "${ok}" -eq 1 ]; then
+                passfail "PASS" "${label}${details:+ (${details})}"
+        else
+                passfail "FAIL" "${label}${details:+ (${details})}"
+                PREFLIGHT_FAILURES+=("${label}${details:+: ${details}}")
+        fi
+}
+
+validate_port_var() {
+        local key="$1"
+        local value="$2"
+        if ! [[ "${value}" =~ ^[0-9]+$ ]]; then
+                fatal "${key} must be an integer; got '${value}'."
+        fi
+        if [ "${value}" -lt 1 ] || [ "${value}" -gt 65535 ]; then
+                fatal "${key} must be in range 1-65535; got '${value}'."
+        fi
+}
+
+validate_required_env_with_default() {
+        local key="$1"
+        local expected="$2"
+        local current="$3"
+        local is_default_used="$4"
+
+        if [ "${is_default_used}" -eq 1 ]; then
+                warn "${key} not set; defaulting to '${current}'."
+        fi
+
+        if [ "${current}" != "${expected}" ]; then
+                warn "${key}='${current}' (expected '${expected}')."
+        fi
+}
+
 validate_steam_login_token() {
         local token="${SRCDS_TOKEN:-}"
 
@@ -24,7 +80,7 @@ validate_steam_login_token() {
         fi
 
         if [ -z "${token}" ] || [ "${token}" = "0" ] || [ "${token}" = "changeme" ]; then
-                fatal "SRCDS_SECURED=1 requires a valid SRCDS_TOKEN (GSLT). Missing/placeholder tokens can cause SteamAPI_Init failures like 'Tried to access Steam interface ... before SteamAPI_Init succeeded'."
+                warn "SRCDS_SECURED=1 but SRCDS_TOKEN is missing/placeholder. LAN/insecure behavior likely; set a real GSLT for secure internet operation."
         fi
 }
 
@@ -339,6 +395,169 @@ emit_diag_snapshot() {
         fi
 }
 
+run_preflight_checks() {
+        local launch_dir="$1"
+        local steamclient_target="${HOMEDIR}/.steam/sdk64/steamclient.so"
+        local steamclient_resolved=""
+        local steamclient_file=""
+        local steamclient_ldd_missing=""
+        local steamclient_ldd_summary=""
+        local mm_vdf="${STEAMAPPDIR}/${STEAMAPP}/addons/metamod.vdf"
+        local mm_file_line=""
+        local mm_loader_abs=""
+        local mm_loader_file=""
+        local sourcemod_path="${STEAMAPPDIR}/${STEAMAPP}/addons/sourcemod"
+        local appid_locations=(
+                "${STEAMAPPDIR}/steam_appid.txt"
+                "${STEAMAPPDIR}/${STEAMAPP}/steam_appid.txt"
+                "${launch_dir}/steam_appid.txt"
+        )
+        local appid_location
+        local appid_content
+        local hard_fail=0
+
+        steamclient_resolved="$(resolve_realpath "${steamclient_target}")"
+        steamclient_file="$(file -L "${steamclient_target}" 2>&1 || true)"
+        steamclient_ldd_missing="$(collect_ldd_missing "${steamclient_target}")"
+        if [ -z "${steamclient_ldd_missing}" ]; then
+                steamclient_ldd_summary="no missing dependencies or undefined symbols"
+        else
+                steamclient_ldd_summary="missing dependencies or undefined symbols detected"
+        fi
+
+        if [ -f "${mm_vdf}" ]; then
+                mm_file_line="$(awk -F'"' '/^[[:space:]]*"file"[[:space:]]*"/ {print $4; exit}' "${mm_vdf}")"
+                if [ -n "${mm_file_line}" ]; then
+                        mm_loader_abs="${STEAMAPPDIR}/${STEAMAPP}/${mm_file_line}"
+                        mm_loader_file="$(file -L "${mm_loader_abs}" 2>&1 || true)"
+                fi
+        fi
+
+        log "CONFIG SUMMARY"
+        log "  Game: Team Fortress 2 Classified Dedicated Server"
+        log "  SteamDB reference: TF2 Classified DS app 3557020; TF2 Dedicated base content app 232250"
+        log "  STEAMAPPDIR: ${STEAMAPPDIR}"
+        log "  STEAMAPP: ${STEAMAPP}"
+        log "  STEAMAPPID (Classified DS): ${STEAMAPPID}"
+        log "  TF2_BASE_APPID: ${TF2_BASE_APPID}"
+        log "  TF2_BASE_DIR: ${TF2_BASE_DIR}"
+        log "  STEAMCMDDIR: ${STEAMCMDDIR}"
+        log "  SteamAppId env: ${SteamAppId}"
+        log "  SteamGameId env: ${SteamGameId}"
+        log "  LD_LIBRARY_PATH: ${LD_LIBRARY_PATH}"
+        log "  pwd: ${PWD}"
+        log "  srcds launch directory: ${launch_dir}"
+        for appid_location in "${appid_locations[@]}"; do
+                if [ -f "${appid_location}" ]; then
+                        appid_content="$(tr -d '[:space:]' < "${appid_location}")"
+                        log "  steam_appid.txt: ${appid_location} => ${appid_content}"
+                else
+                        log "  steam_appid.txt: ${appid_location} => <missing>"
+                fi
+        done
+        log "  steamclient.so resolved path: ${steamclient_resolved:-<unresolved>}"
+        log "  steamclient.so file -L: ${steamclient_file}"
+        log "  steamclient.so ldd -r summary: ${steamclient_ldd_summary}"
+        if [ -n "${mm_file_line}" ]; then
+                log "  MetaMod loader path (from metamod.vdf): ${mm_file_line}"
+                log "  MetaMod loader resolved path: ${mm_loader_abs}"
+                log "  MetaMod loader file -L: ${mm_loader_file}"
+        else
+                log "  MetaMod loader path (from metamod.vdf): <not configured>"
+        fi
+        if [ -d "${sourcemod_path}" ]; then
+                log "  SourceMod path detected: ${sourcemod_path}"
+        else
+                log "  SourceMod path detected: <not installed>"
+        fi
+        if [ -n "${METAMOD_VERSION:-}" ]; then
+                log "  METAMOD_VERSION: ${METAMOD_VERSION}"
+        fi
+        if [ -n "${SOURCEMOD_VERSION:-}" ]; then
+                log "  SOURCEMOD_VERSION: ${SOURCEMOD_VERSION}"
+        fi
+        if [ -n "${SRCDS_TOKEN:-}" ] && [ "${SRCDS_TOKEN}" != "0" ] && [ "${SRCDS_TOKEN}" != "changeme" ]; then
+                log "  SRCDS_TOKEN: set (redacted)"
+        else
+                log "  SRCDS_TOKEN: absent/placeholder (LAN/insecure likely)"
+        fi
+
+        log "CHECKLIST"
+        record_check "$([ "${STEAMAPP}" = "${EXPECTED_STEAMAPP}" ] && echo 1 || echo 0)" "STEAMAPP == ${EXPECTED_STEAMAPP}" "actual=${STEAMAPP}"
+
+        if [ "${STEAMAPPID}" = "${EXPECTED_CLASSIFIED_APPID}" ]; then
+                record_check 1 "STEAMAPPID == ${EXPECTED_CLASSIFIED_APPID}" "actual=${STEAMAPPID}"
+        else
+                record_check 0 "STEAMAPPID == ${EXPECTED_CLASSIFIED_APPID}" "actual=${STEAMAPPID}"
+                hard_fail=1
+        fi
+
+        record_check "$([ "${TF2_BASE_APPID}" = "${EXPECTED_TF2_BASE_APPID}" ] && echo 1 || echo 0)" "TF2_BASE_APPID == ${EXPECTED_TF2_BASE_APPID}" "actual=${TF2_BASE_APPID}"
+
+        if [ "${SteamAppId}" = "${STEAMAPPID}" ]; then
+                record_check 1 "SteamAppId matches STEAMAPPID" "SteamAppId=${SteamAppId}"
+        else
+                record_check 0 "SteamAppId matches STEAMAPPID" "SteamAppId=${SteamAppId}, STEAMAPPID=${STEAMAPPID}"
+                hard_fail=1
+        fi
+
+        local steam_appid_match=1
+        for appid_location in "${appid_locations[@]}"; do
+                if [ ! -f "${appid_location}" ] || [ "$(tr -d '[:space:]' < "${appid_location}" 2>/dev/null || true)" != "${SteamAppId}" ]; then
+                        steam_appid_match=0
+                fi
+        done
+        if [ "${steam_appid_match}" -eq 1 ]; then
+                record_check 1 "steam_appid.txt content matches SteamAppId" "SteamAppId=${SteamAppId}"
+        else
+                record_check 0 "steam_appid.txt content matches SteamAppId" "expected=${SteamAppId}"
+                hard_fail=1
+        fi
+
+        if echo "${steamclient_file}" | grep -Eq 'ELF 64-bit.*shared object'; then
+                record_check 1 "steamclient.so is ELF 64-bit shared object (using file -L)"
+        else
+                record_check 0 "steamclient.so is ELF 64-bit shared object (using file -L)" "${steamclient_file}"
+                hard_fail=1
+        fi
+
+        if [ -z "${steamclient_ldd_missing}" ]; then
+                record_check 1 "steamclient.so has no missing deps (ldd -r)"
+        else
+                record_check 0 "steamclient.so has no missing deps (ldd -r)" "$(echo "${steamclient_ldd_missing}" | tr '\n' ';' | sed 's/;$/')"
+                hard_fail=1
+        fi
+
+        if [ -n "${mm_file_line}" ] && [ -f "${mm_loader_abs}" ] && echo "${mm_loader_file}" | grep -Eq 'ELF 64-bit.*shared object'; then
+                record_check 1 "metamod.vdf loader file exists and is ELF 64-bit shared object"
+        else
+                record_check 0 "metamod.vdf loader file exists and is ELF 64-bit shared object" "path=${mm_loader_abs:-<missing>}"
+                hard_fail=1
+        fi
+
+        if [ -n "${mm_file_line}" ] \
+                && [[ "${mm_file_line}" =~ ^[A-Za-z0-9._/-]+$ ]] \
+                && [[ "${mm_file_line}" != /* ]] \
+                && [[ "${mm_file_line}" != *..* ]]; then
+                record_check 1 "metamod.vdf \"file\" line is a clean relative path under game dir (no timestamps/log fragments)" "file=${mm_file_line}"
+        else
+                record_check 0 "metamod.vdf \"file\" line is a clean relative path under game dir (no timestamps/log fragments)" "file=${mm_file_line:-<missing>}"
+                hard_fail=1
+        fi
+
+        if [ "${hard_fail}" -ne 0 ]; then
+                fatal "Preflight hard failure. Fix SteamAppId/STEAMAPPID (must be ${EXPECTED_CLASSIFIED_APPID} for TF2 Classified DS), steam_appid.txt contents, steamclient runtime, and metamod loader path before launch."
+        fi
+}
+
+EXPECTED_STEAMAPP="tf2classified"
+EXPECTED_CLASSIFIED_APPID="3557020"
+EXPECTED_TF2_BASE_APPID="232250"
+
+# SteamDB references used as source-of-truth for AppID validation:
+# - TF2 Classified Dedicated Server: https://steamdb.info/app/3557020/info/
+# - TF2 Dedicated Server base content: https://steamdb.info/app/232250/depots/
+
 repair_vpks_if_requested() {
         if [ "${SRCDS_REPAIR_VPKS:-0}" -ne 1 ]; then
                 return
@@ -379,13 +598,48 @@ repair_vpks_if_requested() {
         done
 }
 
+STEAMAPP_WAS_UNSET=0
+STEAMAPPID_WAS_UNSET=0
+STEAMAPPDIR_WAS_UNSET=0
+TF2_BASE_APPID_WAS_UNSET=0
+TF2_BASE_DIR_WAS_UNSET=0
+[ -z "${STEAMAPP+x}" ] && STEAMAPP_WAS_UNSET=1
+[ -z "${STEAMAPPID+x}" ] && STEAMAPPID_WAS_UNSET=1
+[ -z "${STEAMAPPDIR+x}" ] && STEAMAPPDIR_WAS_UNSET=1
+[ -z "${TF2_BASE_APPID+x}" ] && TF2_BASE_APPID_WAS_UNSET=1
+[ -z "${TF2_BASE_DIR+x}" ] && TF2_BASE_DIR_WAS_UNSET=1
+
+STEAMAPP="${STEAMAPP:-${EXPECTED_STEAMAPP}}"
+STEAMAPPID="${STEAMAPPID:-${EXPECTED_CLASSIFIED_APPID}}"
+STEAMAPPDIR="${STEAMAPPDIR:-${HOMEDIR}/tf2classified-dedicated}"
+STEAMCMDDIR="${STEAMCMDDIR:-${HOMEDIR}/steamcmd}"
+TF2_BASE_APPID="${TF2_BASE_APPID:-${EXPECTED_TF2_BASE_APPID}}"
+TF2_BASE_DIR="${TF2_BASE_DIR:-${HOMEDIR}/tf2-dedicated}"
+SRCDS_IP="${SRCDS_IP:-0}"
+SRCDS_PORT="${SRCDS_PORT:-27015}"
+SRCDS_TV_PORT="${SRCDS_TV_PORT:-27020}"
+SRCDS_CLIENT_PORT="${SRCDS_CLIENT_PORT:-27005}"
+
+validate_required_env_with_default "STEAMAPP" "${EXPECTED_STEAMAPP}" "${STEAMAPP}" "${STEAMAPP_WAS_UNSET}"
+validate_required_env_with_default "STEAMAPPID" "${EXPECTED_CLASSIFIED_APPID}" "${STEAMAPPID}" "${STEAMAPPID_WAS_UNSET}"
+validate_required_env_with_default "TF2_BASE_APPID" "${EXPECTED_TF2_BASE_APPID}" "${TF2_BASE_APPID}" "${TF2_BASE_APPID_WAS_UNSET}"
+validate_required_env_with_default "STEAMAPPDIR" "${HOMEDIR}/tf2classified-dedicated" "${STEAMAPPDIR}" "${STEAMAPPDIR_WAS_UNSET}"
+validate_required_env_with_default "TF2_BASE_DIR" "${HOMEDIR}/tf2-dedicated" "${TF2_BASE_DIR}" "${TF2_BASE_DIR_WAS_UNSET}"
+if [ ! -x "${STEAMCMDDIR}/steamcmd.sh" ]; then
+        fatal "STEAMCMDDIR must contain steamcmd.sh; missing '${STEAMCMDDIR}/steamcmd.sh'."
+fi
+
+validate_port_var "SRCDS_PORT" "${SRCDS_PORT}"
+validate_port_var "SRCDS_TV_PORT" "${SRCDS_TV_PORT}"
+validate_port_var "SRCDS_CLIENT_PORT" "${SRCDS_CLIENT_PORT}"
+
 mkdir -p "${STEAMAPPDIR}" || true
-mkdir -p "${TF2_BASE_DIR:-${HOMEDIR}/tf2-dedicated}" || true
+mkdir -p "${TF2_BASE_DIR}" || true
 ensure_writable_dir /tmp
 ensure_writable_dir "${HOMEDIR}/.steam"
 
-CLASSIFIED_APPID="${STEAMAPPID:-3557020}"
-TF2_BASE_APPID_VALUE="${TF2_BASE_APPID:-232250}"
+CLASSIFIED_APPID="${STEAMAPPID}"
+TF2_BASE_APPID_VALUE="${TF2_BASE_APPID}"
 STEAM_RUNTIME_APPID="${SRCDS_STEAM_APPID:-${CLASSIFIED_APPID}}"
 STEAM_RUNTIME_GAMEID="${SRCDS_STEAM_GAMEID:-${CLASSIFIED_APPID}}"
 
@@ -550,6 +804,8 @@ validate_steam_login_token
 ensure_steamclient_sdk64
 export SteamAppId="${STEAM_RUNTIME_APPID}"
 export SteamGameId="${STEAM_RUNTIME_GAMEID}"
+# SteamAppId/steam_appid.txt must be TF2 Classified DS AppID (3557020).
+# TF2_BASE_APPID (232250) is only for base content used by -tf_path.
 SRCDS_LAUNCH_DIR="$(pwd)"
 printf '%s\n' "${STEAM_RUNTIME_APPID}" > "${STEAMAPPDIR}/steam_appid.txt"
 printf '%s\n' "${STEAM_RUNTIME_APPID}" > "${STEAMAPPDIR}/${STEAMAPP}/steam_appid.txt"
@@ -575,6 +831,7 @@ else
         SV_SETSTEAMACCOUNT_ARGS=()
 fi
 
+run_preflight_checks "${SRCDS_LAUNCH_DIR}"
 emit_diag_snapshot
 
 exec "${SRCDS_BINARY}" -game "${STEAMAPP}" -console -autoupdate \
