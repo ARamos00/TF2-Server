@@ -16,6 +16,60 @@ This Docker image contains the dedicated server of the game.
 <img src="https://1000logos.net/wp-content/uploads/2020/09/Team-Fortress-2-logo.png" alt="logo" width="300"/></img>
 
 # How to use this image
+
+## TF2 Classified x64 quickstart (this repo)
+
+This repository's x64 image installs and runs **TF2 Classified dedicated server (AppID `3557020`)** from `/home/steam/tf2classified-dedicated` using `-game tf2classified`. It also installs **TF2 base dedicated content (AppID `232250`)** into `/home/steam/tf2-dedicated` and passes it via `-tf_path`; this is intentional because the TF2 Classified server reads shared base assets from that path.
+
+Linux host example (host networking):
+```console
+$ docker build -t tf2classified:x64 -f bookworm/x64/Dockerfile .
+$ docker run -d --name tf2classified --net=host \
+  -e SRCDS_TOKEN={YOURTOKEN} \
+  -v $(pwd)/tf2c-data:/home/steam/tf2classified-dedicated \
+  tf2classified:x64
+```
+
+Windows Docker Desktop / PowerShell example (published ports, no host network mode):
+```powershell
+docker build -t tf2classified:x64 -f bookworm/x64/Dockerfile .
+docker run -d --name tf2classified `
+  -e SRCDS_TOKEN={YOURTOKEN} `
+  -p 27015:27015/udp -p 27015:27015/tcp -p 27020:27020/udp -p 27005:27005/udp `
+  -v ${PWD}/tf2c-data:/home/steam/tf2classified-dedicated `
+  tf2classified:x64
+```
+
+### Local connection guidance
+- Same host as Docker: connect to `127.0.0.1:27015`.
+- Same LAN as Docker host: connect to the **host LAN IP** (for example `192.168.1.50:27015`).
+- Do **not** assume public-IP-from-LAN works; many routers do not support NAT loopback/hairpin NAT, which causes local retries/timeouts while remote players can still join.
+
+### Required ports
+- `27015/udp` (game traffic, required)
+- `27015/tcp` (queries/rcon compatibility, recommended)
+- `27020/udp` (SourceTV, if used)
+- `27005/udp` (client port configured by `SRCDS_CLIENT_PORT`)
+
+### Corruption / pure-server remediation
+If logs show `VPK chunk hash does not match`, force a clean validation on next start:
+```console
+$ docker stop tf2classified
+$ docker run --rm -it -v $(pwd)/tf2c-data:/home/steam/tf2classified-dedicated tf2classified:x64 bash -lc 'STEAMAPP_VALIDATE=1 TF2_BASE_VALIDATE=1 /home/steam/entry_x64.sh'
+```
+The startup script now logs both AppIDs and install directories so accidental AppID drift is visible in `docker logs`.
+
+### Smoke test checklist
+```console
+$ docker logs -f tf2classified
+```
+Confirm:
+- `Updating primary app 3557020`
+- `Updating TF2 base content app 232250`
+- `Configured .../addons/metamod.vdf to use addons/metamod/bin/linux64/server` (metamod/sourcemod image variants)
+- no `ELFCLASS32` message
+- `Using Source dedicated server launcher` and `Runtime settings: game=tf2classified`
+
 ## Hosting a simple game server
 
 Running on the *host* interface (recommended):<br/>
