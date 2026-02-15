@@ -93,7 +93,7 @@ exec "${SRCDS_BINARY}" -game "${STEAMAPP}" -console -autoupdate \
                         -tickrate "${SRCDS_TICKRATE}" \
                         -port "${SRCDS_PORT}" \
                         +tv_port "${SRCDS_TV_PORT}" \
-                        +clientport "${SRCDS_CLIENT_PORT}" \
+                        +clientport "${SRCDS_CLIENT_PORT:-27005}" \
                         +maxplayers "${SRCDS_MAXPLAYERS}" \
                         +map "${SRCDS_STARTMAP}" \
                         +sv_setsteamaccount "${SRCDS_TOKEN}" \
