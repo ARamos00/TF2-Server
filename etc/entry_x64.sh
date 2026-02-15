@@ -27,6 +27,14 @@ fi
 # Believe it or not, if you don't do this srcds_run shits itself
 cd "${STEAMAPPDIR}"
 
+if [ ! -d "${STEAMAPPDIR}/${STEAMAPP}" ]; then
+        DETECTED_GAMEINFO=$(find "${STEAMAPPDIR}" -maxdepth 4 -type f -name gameinfo.txt | head -n 1)
+        if [ -n "${DETECTED_GAMEINFO}" ]; then
+                STEAMAPP=$(basename "$(dirname "${DETECTED_GAMEINFO}")")
+                echo "Detected game directory '${STEAMAPP}' from ${DETECTED_GAMEINFO}"
+        fi
+fi
+
 SERVER_SECURITY_FLAG="";
 
 if [ "$SRCDS_SECURED" -eq 0 ]; then
@@ -49,6 +57,21 @@ SRCDS_BINARY="${STEAMAPPDIR}/srcds_run_64"
 if [ ! -x "${SRCDS_BINARY}" ]; then
         SRCDS_BINARY="${STEAMAPPDIR}/srcds_run"
 fi
+
+if [ ! -x "${SRCDS_BINARY}" ]; then
+        DETECTED_SRCDS_BINARY=$(find "${STEAMAPPDIR}" -maxdepth 4 -type f \( -name srcds_run_64 -o -name srcds_run \) | head -n 1)
+        if [ -n "${DETECTED_SRCDS_BINARY}" ]; then
+                SRCDS_BINARY="${DETECTED_SRCDS_BINARY}"
+                echo "Detected Source dedicated server launcher at '${SRCDS_BINARY}'"
+        else
+                echo "Could not find srcds_run or srcds_run_64 under '${STEAMAPPDIR}'."
+                echo "Contents of install directory:"
+                find "${STEAMAPPDIR}" -maxdepth 2 -mindepth 1 -print
+                exit 1
+        fi
+fi
+
+cd "$(dirname "${SRCDS_BINARY}")"
 
 bash "${SRCDS_BINARY}" -game "${STEAMAPP}" -console -autoupdate \
                         -steam_dir "${STEAMCMDDIR}" \
