@@ -20,6 +20,7 @@ RUN set -x \
 	&& apt-get install -y --no-install-recommends --no-install-suggests \
 		wget \
 		ca-certificates \
+		file \
 		zlib1g \
 		libncurses6 \
 		libbz2-1.0 \
@@ -43,6 +44,8 @@ RUN set -x \
 		echo 'app_update '"${TF2_BASE_APPID}"' validate'; \
 		echo 'quit'; \
 	   } > "${HOMEDIR}/tf2_base_update.txt" \
+	&& sed -i 's/\r$//' "${HOMEDIR}/entry_x64.sh" \
+	&& find "${STEAMAPPDIR}/${STEAMAPP}/cfg" -type f \( -name '*.cfg' -o -name '*.txt' \) -exec sed -i 's/\r$//' {} + \
 	&& chmod +x "${HOMEDIR}/entry_x64.sh" \
 	&& chown -R "${USER}:${USER}" "${HOMEDIR}/entry_x64.sh" "${STEAMAPPDIR}" "${TF2_BASE_DIR}" "${HOMEDIR}/${STEAMAPP}_update.txt" "${HOMEDIR}/tf2_base_update.txt" \
 	# Clean up
