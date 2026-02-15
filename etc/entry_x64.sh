@@ -2,7 +2,7 @@
 set -euo pipefail
 
 log() {
-        echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] $*"
+        echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] $*" >&2
 }
 
 diag_log() {
@@ -73,94 +73,27 @@ binary_contains_token() {
 choose_metamod_loader_target() {
         local mm_root="$1"
         local game_dir="$2"
-        local candidate
-        local relative
+        local preferred="${mm_root}/bin/linux64/server"
+        local fallback="${mm_root}/bin/linux64/server.so"
         local selected=""
-        local selected_score=-1
-        local selected_reason=""
-        local file_info
-        local missing
-        local marker_count
-        local marker_details
-        local export_marker=0
+        local relative
 
-        for candidate in \
-                "${mm_root}/bin/linux64/server" \
-                "${mm_root}/bin/linux64/server.so"; do
-                if [ ! -f "${candidate}" ]; then
-                        continue
-                fi
-
-                file_info="$(file -L "${candidate}")"
-                log "Metamod candidate ${candidate}: ${file_info}"
-                if ! echo "${file_info}" | grep -q 'ELF 64-bit'; then
-                        log "Skipping Metamod loader candidate (not ELF 64-bit): ${candidate}"
-                        continue
-                fi
-                if ! echo "${file_info}" | grep -q 'shared object'; then
-                        log "Skipping Metamod loader candidate (not shared object): ${candidate}"
-                        continue
-                fi
-
-                missing="$(collect_ldd_missing "${candidate}")"
-                if [ -n "${missing}" ]; then
-                        log "Skipping Metamod loader candidate (ldd -r unresolved symbols): ${candidate}"
-                        echo "${missing}" | sed 's/^/[ldd-missing] /'
-                        continue
-                fi
-
-                marker_count=0
-                marker_details=""
-                if strings -a "${candidate}" | grep -Fq 'IServerPluginCallbacks'; then
-                        marker_count=$((marker_count + 1))
-                        marker_details="${marker_details} IServerPluginCallbacks"
-                fi
-                if strings -a "${candidate}" | grep -Fq 'CreateInterface'; then
-                        marker_count=$((marker_count + 1))
-                        marker_details="${marker_details} CreateInterface"
-                fi
-                if strings -a "${candidate}" | grep -Eq 'Metamod:Source|ISmmAPI|ISmmPlugin'; then
-                        marker_count=$((marker_count + 1))
-                        marker_details="${marker_details} Metamod-identity"
-                fi
-                if readelf -Ws "${candidate}" 2>/dev/null | grep -Eq 'CreateInterface|GetEngineFactory'; then
-                        export_marker=1
-                        marker_details="${marker_details} exported-factory"
-                else
-                        export_marker=0
-                fi
-
-                if [ $((marker_count + export_marker)) -le 0 ]; then
-                        log "Skipping Metamod loader candidate (no deterministic loader markers): ${candidate}"
-                        continue
-                fi
-
-                if [ $((marker_count + export_marker)) -gt "${selected_score}" ]; then
-                        selected="${candidate}"
-                        selected_score=$((marker_count + export_marker))
-                        selected_reason="markers:${marker_details# }"
-                fi
-        done
-
-        if [ -z "${selected}" ]; then
+        if [ -f "${preferred}" ]; then
+                selected="${preferred}"
+        elif [ -f "${fallback}" ]; then
+                ln -sf "server.so" "${preferred}"
+                log "Created Metamod compatibility symlink: ${preferred} -> server.so"
+                selected="${preferred}"
+        else
                 return 1
         fi
-
-        if [ -f "${mm_root}/bin/linux64/server.so" ] && [ "${selected}" = "${mm_root}/bin/linux64/server.so" ] && [ ! -e "${mm_root}/bin/linux64/server" ]; then
-                ln -s "server.so" "${mm_root}/bin/linux64/server"
-                log "Created Metamod compatibility symlink: ${mm_root}/bin/linux64/server -> server.so"
-                selected="${mm_root}/bin/linux64/server"
-                selected_reason="${selected_reason},preferred-no-extension-path"
-        fi
-
-        log "Selected Metamod loader candidate: ${selected} (${selected_reason})"
 
         relative="${selected#"${game_dir}/"}"
         if [ "${relative}" = "${selected}" ]; then
                 fatal "Metamod binary '${selected}' is not under game dir '${game_dir}'."
         fi
 
-        echo "${relative}"
+        printf '%s\n' "${relative}"
 }
 
 steamcmd_app_update_with_retry() {
@@ -255,16 +188,13 @@ ensure_steamclient_sdk64() {
                 fatal "Unable to resolve steamclient target '${target}' to a real file."
         fi
 
-        file_output="$(file -L "${resolved_target}")"
+        file_output="$(file -L "${target}")"
         log "steamclient symlink path: ${target}"
         log "steamclient resolved path: ${resolved_target}"
         log "steamclient file -L: ${file_output}"
 
-        if ! echo "${file_output}" | grep -q 'ELF 64-bit'; then
-                fatal "${target} resolved to non-ELF64 file: ${file_output}"
-        fi
-        if ! echo "${file_output}" | grep -q 'shared object'; then
-                fatal "${target} resolved file is not a shared object: ${file_output}"
+        if ! echo "${file_output}" | grep -Eq 'ELF 64-bit.*shared object'; then
+                fatal "${target} is not an ELF 64-bit shared library: ${file_output}"
         fi
 
         missing="$(collect_ldd_missing "${resolved_target}")"
@@ -430,20 +360,23 @@ if [ -d "${STEAMAPPDIR}/${STEAMAPP}/addons/metamod" ]; then
 VDF
                 MM64_BIN="${STEAMAPPDIR}/${STEAMAPP}/${MM64_TARGET}"
                 log "Configured ${MM_VDF} to use ${MM64_TARGET}"
-                MM64_FILE_INFO="$(file "${MM64_BIN}")"
+                MM64_FILE_INFO="$(file -L "${MM64_BIN}")"
                 log "Metamod binary info: ${MM64_FILE_INFO}"
-                if ! echo "${MM64_FILE_INFO}" | grep -q 'ELF 64-bit'; then
+                if ! echo "${MM64_FILE_INFO}" | grep -Eq 'ELF 64-bit.*shared object'; then
                         fatal "${MM64_BIN} is not 64-bit; refusing to start x64 server."
                 fi
-                if ! echo "${MM64_FILE_INFO}" | grep -q 'shared object'; then
-                        fatal "${MM64_BIN} is not a shared object; refusing to start."
-                fi
-                if binary_contains_token "${MM64_BIN}" "IServerPluginCallbacks"; then
-                        log "Metamod loader '${MM64_TARGET}' contains IServerPluginCallbacks marker."
-                else
-                        log "WARNING: IServerPluginCallbacks marker not found in '${MM64_TARGET}'."
+                MM64_MISSING="$(collect_ldd_missing "${MM64_BIN}")"
+                if [ -n "${MM64_MISSING}" ]; then
+                        echo "${MM64_MISSING}" | sed 's/^/[metamod-ldd-missing] /' >&2
+                        fatal "Metamod loader ${MM64_TARGET} failed dependency resolution (ldd -r)."
                 fi
                 run_ldd_check "${MM64_BIN}" "Metamod loader ${MM64_TARGET}"
+
+                MM64_RESOLVED="$(readlink -f "${MM64_BIN}" || true)"
+                log "Metamod loader resolved path: ${MM64_RESOLVED}"
+                log "metamod.vdf contents:"
+                sed 's/^/[metamod.vdf] /' "${MM_VDF}" >&2
+                log "metamod.vdf file line: $(awk -F'"' '/"file"/ {print $4}' "${MM_VDF}" | head -n 1)"
         elif [ -f "${MM32_BIN}" ]; then
                 log "ERROR: only 32-bit Metamod binary found at addons/metamod/bin/server.so"
                 log "Binary info: $(file "${MM32_BIN}")"
@@ -539,7 +472,7 @@ export SteamGameId="${CLASSIFIED_APPID}"
 printf '%s\n' "${CLASSIFIED_APPID}" > "${STEAMAPPDIR}/steam_appid.txt"
 printf '%s\n' "${CLASSIFIED_APPID}" > "${STEAMAPPDIR}/${STEAMAPP}/steam_appid.txt"
 printf '%s\n' "${CLASSIFIED_APPID}" > "$(pwd)/steam_appid.txt"
-log "Steam runtime check: $(file "${HOMEDIR}/.steam/sdk64/steamclient.so")"
+log "Steam runtime check: $(file -L "${HOMEDIR}/.steam/sdk64/steamclient.so")"
 run_ldd_check "${HOMEDIR}/.steam/sdk64/steamclient.so" "steamclient runtime"
 if [ ! -s "${STEAMAPPDIR}/${STEAMAPP}/steam_appid.txt" ]; then
         fatal "Missing steam_appid.txt in game directory ${STEAMAPPDIR}/${STEAMAPP}."
