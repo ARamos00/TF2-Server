@@ -95,6 +95,8 @@ SRCDS_MAPCYCLE="mapcycle_default.txt" (value can be overwritten by tf/cfg/server
 SRCDS_SECURED=1 (0 to start the server as insecured)
 SRCDS_SDR_FAKEIP=0 (1 to allow for the Steam Datagram Relay, hiding the server's IP)
 SRCDS_REPLAY=0 (1 to enable replay support)
+STEAMAPP_VALIDATE=1 (x64 images; validate TF2C files on startup to repair corrupted/mismatched VPKs)
+TF2_BASE_VALIDATE=1 (x64 images; validate TF2 base content on startup)
 ```
 
 ## Config
@@ -122,6 +124,8 @@ This is another specialized image. It contains both [Metamod:Source](https://www
 
 ## `tf2:[variant]-x64`
 A 64-bit version of all three variants, i.e. `latest-x64`, `metamod-x64`, and `sourcemod-x64`. This will run a fully 64-bit server, `srcds_linux64`, with a 64-bit version of Metamod or SourceMod.
+
+The x64 Metamod/SourceMod variants download the `linux64` builds when available.
 ### Which to use?
 If you require SourceMod and aren't fully sure whether your plugins work on 64-bit servers, it's better to use the normal 32-bit variant, `tf2:sourcemod`. If you want to run a server without any plugins, `tf2:latest-x64` is preferred.
 

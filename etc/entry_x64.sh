@@ -4,25 +4,37 @@ set -euo pipefail
 mkdir -p "${STEAMAPPDIR}" || true
 mkdir -p "${TF2_BASE_DIR:-${HOMEDIR}/tf2-dedicated}" || true
 
+APP_VALIDATE_ARGS=("${STEAMAPPID}")
+if [ "${STEAMAPP_VALIDATE:-1}" -eq 1 ]; then
+        APP_VALIDATE_ARGS+=(validate)
+fi
+
+TF2_BASE_VALIDATE_ARGS=("${TF2_BASE_APPID:-232250}")
+if [ "${TF2_BASE_VALIDATE:-1}" -eq 1 ]; then
+        TF2_BASE_VALIDATE_ARGS+=(validate)
+fi
+
 bash "${STEAMCMDDIR}/steamcmd.sh" +force_install_dir "${STEAMAPPDIR}" \
 				+login anonymous \
-				+app_update "${STEAMAPPID}" \
+				+app_update "${APP_VALIDATE_ARGS[@]}" \
 				+quit
 
 bash "${STEAMCMDDIR}/steamcmd.sh" +force_install_dir "${TF2_BASE_DIR:-${HOMEDIR}/tf2-dedicated}" \
 				+login anonymous \
-				+app_update "${TF2_BASE_APPID:-232250}" \
+				+app_update "${TF2_BASE_VALIDATE_ARGS[@]}" \
 				+quit
 
 # Are we in a metamod container and is the metamod folder missing?
 if [ -n "${METAMOD_VERSION:-}" ] && [ ! -d "${STEAMAPPDIR}/${STEAMAPP}/addons/metamod" ]; then
-        LATESTMM=$(wget -qO- https://mms.alliedmods.net/mmsdrop/"${METAMOD_VERSION}"/mmsource-latest-linux)
+        LATESTMM=$(wget -qO- "https://mms.alliedmods.net/mmsdrop/${METAMOD_VERSION}/mmsource-latest-linux64" \
+                || wget -qO- "https://mms.alliedmods.net/mmsdrop/${METAMOD_VERSION}/mmsource-latest-linux")
         wget -qO- https://mms.alliedmods.net/mmsdrop/"${METAMOD_VERSION}"/"${LATESTMM}" | tar xvzf - -C "${STEAMAPPDIR}/${STEAMAPP}"
 fi
 
 # Are we in a sourcemod container and is the sourcemod folder missing?
 if [ -n "${SOURCEMOD_VERSION:-}" ] && [ ! -d "${STEAMAPPDIR}/${STEAMAPP}/addons/sourcemod" ]; then
-        LATESTSM=$(wget -qO- https://sm.alliedmods.net/smdrop/"${SOURCEMOD_VERSION}"/sourcemod-latest-linux)
+        LATESTSM=$(wget -qO- "https://sm.alliedmods.net/smdrop/${SOURCEMOD_VERSION}/sourcemod-latest-linux64" \
+                || wget -qO- "https://sm.alliedmods.net/smdrop/${SOURCEMOD_VERSION}/sourcemod-latest-linux")
         wget -qO- https://sm.alliedmods.net/smdrop/"${SOURCEMOD_VERSION}"/"${LATESTSM}" | tar xvzf - -C "${STEAMAPPDIR}/${STEAMAPP}"
 fi
 
