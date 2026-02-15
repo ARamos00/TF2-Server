@@ -5,8 +5,8 @@ FROM cm2network/steamcmd:root AS build_stage
 
 LABEL maintainer="walentinlamonos@gmail.com"
 
-ENV STEAMAPPID 232250
-ENV STEAMAPP tf
+ENV STEAMAPPID 3557020
+ENV STEAMAPP tf2classified
 ENV STEAMAPPDIR "${HOMEDIR}/${STEAMAPP}-dedicated"
 
 COPY "etc/entry_x64.sh" "${HOMEDIR}/entry_x64.sh"
@@ -30,7 +30,7 @@ RUN set -x \
 		echo '@NoPromptForPassword 1'; \
 		echo 'force_install_dir '"${STEAMAPPDIR}"''; \
 		echo 'login anonymous'; \
-		echo 'app_update '"${STEAMAPPID}"''; \
+		echo 'app_update '"${STEAMAPPID}"' validate'; \
 		echo 'quit'; \
 	   } > "${HOMEDIR}/${STEAMAPP}_update.txt" \
 	&& chmod +x "${HOMEDIR}/entry_x64.sh" \

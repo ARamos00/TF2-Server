@@ -45,7 +45,12 @@ if [ "$SRCDS_REPLAY" -eq 1 ]; then
         REPLAY_FLAG="-replay";
 fi
 
-bash "${STEAMAPPDIR}/srcds_run_64" -game "${STEAMAPP}" -console -autoupdate \
+SRCDS_BINARY="${STEAMAPPDIR}/srcds_run_64"
+if [ ! -x "${SRCDS_BINARY}" ]; then
+        SRCDS_BINARY="${STEAMAPPDIR}/srcds_run"
+fi
+
+bash "${SRCDS_BINARY}" -game "${STEAMAPP}" -console -autoupdate \
                         -steam_dir "${STEAMCMDDIR}" \
                         -steamcmd_script "${HOMEDIR}/${STEAMAPP}_update.txt" \
                         -usercon \
